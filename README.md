@@ -243,12 +243,12 @@ The unified container serves compiled React static assets directly from `/` and 
 
 ThreatPath is fully configured for deployment on Railway or any Docker-compatible PaaS platform:
 
-- **Single Web Service**: Directly deploys from the root `Dockerfile` using `railway.json`.
-- **Private FalkorDB Service**: Uses official `falkordb/falkordb-server`, mounted to a persistent volume at `/var/lib/falkordb/data`, protected by Redis password authentication (`REDIS_ARGS=--requirepass ...`), with zero public network exposure.
+- **Single Web Service**: Directly deploys from the root `Dockerfile` with automatic dynamic port binding (`$PORT`) and graceful signal propagation.
+- **Private FalkorDB Service**: Uses official pinned `falkordb/falkordb-server:6.0.2`, mounted to a persistent volume at `/var/lib/falkordb/data`, protected by Redis password authentication (`REDIS_ARGS=--requirepass ${{ FALKORDB_PASSWORD }} --appendonly yes`), with zero public network exposure.
 - **Dedicated Demo Graph**: Uses isolated graph `threatpath_demo`.
 - **Durable Simulation State**: Simulated containment and incident state transitions are persisted in FalkorDB and survive container restarts.
 - **Multi-User Demo Isolation**: Sessions are isolated by demo session ID so multiple judges never corrupt each other's investigations.
-- **Safe Remote Seeding**: Dedicated idempotent seed utility with strict safeguards:
+- **Safe In-Network Remote Seeding**: Dedicated idempotent seed utility with strict safeguards run inside Railway's private network (via container terminal or one-off seeder job):
   ```bash
   python -m scripts.seed_remote --confirm
   ```

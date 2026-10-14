@@ -73,6 +73,14 @@ docker run --rm -p 8080:8000 \
 
 ## 3. Railway Cloud Setup (Manual Configuration Steps)
 
+> [!IMPORTANT]
+> **Railway Configuration Architecture Notice:**
+> Railway has officially **deprecated Config-as-Code (`railway.json` / `railway.toml`)**, and new services cannot opt into it. While `railway.json` is maintained in this repository for legacy compatibility, **new services must not rely on it**.
+> 
+> ThreatPath is engineered for full compatibility with Railway's modern platform architecture:
+> 1. **Self-Contained Container Runtime:** The production `Dockerfile` contains a signal-propagating shell entrypoint (`CMD ["sh", "-c", "exec uvicorn backend.main:app --host 0.0.0.0 --port \"${PORT:-8000}\""]`). It natively binds to Railway's dynamic `$PORT` environment variable and handles graceful shutdown without requiring any custom start command in the Railway dashboard.
+> 2. **Explicit Dashboard Configuration:** Critical operational parameters (health checks, volume mount paths, private networking, and inter-service secrets) are configured directly via the Railway Web Dashboard as detailed below.
+
 To deploy ThreatPath on Railway, follow these exact steps in the Railway dashboard.
 
 ### Step 1: Create a New Empty Project
@@ -81,18 +89,18 @@ To deploy ThreatPath on Railway, follow these exact steps in the Railway dashboa
 
 ### Step 2: Provision Service 2 — Dedicated FalkorDB Service
 1. In the project canvas, click **+ Create** -> **Docker Image**.
-2. Set the image repository:
+2. Set the verified production image repository and pinned release tag:
    ```text
-   falkordb/falkordb-server:latest
+   falkordb/falkordb-server:6.0.2
    ```
-   *(Note: pin to a specific release tag such as `v0.5.2` / `6.0` if preferred).*
+   *(Multi-architecture manifest digest: `sha256:8e4fe29e6646890a9deaf2f009ad2bc5e592d79fe9cd718810c3a97a8bcd34c0`)*
 3. Name the service: `falkordb`.
 4. In the service **Settings**:
    - **Networking:** Do **NOT** generate a public domain. Do **NOT** create a public TCP proxy.
    - Note the **Private Service Name** (typically `falkordb.railway.internal`).
 5. In **Volumes**:
    - Click **Add Volume**.
-   - Set the mount path to:
+   - Set the mount path strictly to:
      ```text
      /var/lib/falkordb/data
      ```
@@ -101,9 +109,9 @@ To deploy ThreatPath on Railway, follow these exact steps in the Railway dashboa
      ```text
      FALKORDB_PASSWORD=<Generate a high-entropy 32+ character random string>
      ```
-   - Add Redis password configuration:
+   - Add Redis password and AOF durability configuration using official Railway same-service template syntax:
      ```text
-     REDIS_ARGS=--requirepass ${FALKORDB_PASSWORD}
+     REDIS_ARGS=--requirepass ${{ FALKORDB_PASSWORD }} --appendonly yes
      ```
 
 ### Step 3: Provision Service 1 — ThreatPath Web Application
@@ -111,18 +119,20 @@ To deploy ThreatPath on Railway, follow these exact steps in the Railway dashboa
 2. Select your repository `ThreatPath`.
 3. Name the service: `threatpath-web`.
 4. In **Settings**:
-   - **Build:** Builder is automatically detected as `DOCKERFILE` via `railway.json`.
+   - **Build:** Builder is automatically detected from the root `Dockerfile`.
+   - **Deploy -> Start Command:** Leave **EMPTY** (defaults automatically to the Dockerfile's built-in `CMD ["sh", "-c", "exec uvicorn backend.main:app --host 0.0.0.0 --port \"${PORT:-8000}\""]`).
    - **Networking:** Click **Generate Domain** (e.g. `threatpath-production.up.railway.app`).
    - **Healthcheck Path:** Set to `/api/health`.
    - **Healthcheck Timeout:** Set to `120` seconds.
-5. In **Variables**, enter the following environment configuration:
+   - **Restart Policy:** `On Failure` (max retries: 5).
+5. In **Variables**, enter the following environment configuration using official Railway template syntax:
 
 | Variable Name | Recommended Value | Description | Secret? |
 | :--- | :--- | :--- | :--- |
 | `APP_ENV` | `production` | Production runtime flag | No |
-| `FALKORDB_HOST` | `falkordb.railway.internal` | Railway Private DNS name of Service 2 | No |
+| `FALKORDB_HOST` | `${{ falkordb.RAILWAY_PRIVATE_DOMAIN }}` | Official Railway cross-service private DNS | No |
 | `FALKORDB_PORT` | `6379` | FalkorDB standard port | No |
-| `FALKORDB_PASSWORD` | `${{falkordb.FALKORDB_PASSWORD}}` | Reference to Service 2 secret password | **YES (Secret)** |
+| `FALKORDB_PASSWORD` | `${{ falkordb.FALKORDB_PASSWORD }}` | Official Railway cross-service secret reference | **YES (Secret)** |
 | `FALKORDB_GRAPH` | `threatpath_demo` | Dedicated remote demo graph | No |
 | `LLM_PROVIDER` | `mock` | Deterministic fallback mode (zero external key required) | No |
 | `ENABLE_SIMULATED_RESPONSES` | `true` | Allows simulated defensive response lifecycle | No |
@@ -133,30 +143,95 @@ To deploy ThreatPath on Railway, follow these exact steps in the Railway dashboa
 
 ---
 
-## 4. Remote Graph Seeding Procedure
+## 4. Pre-Deployment Verification Checklist
 
-The remote database must be seeded once after deployment is established.
+Before provisioning or authorizing a public demonstration deployment, verify the following controls:
+
+- [ ] **Database Authentication**:
+  - FalkorDB service configured with `REDIS_ARGS=--requirepass ${{ FALKORDB_PASSWORD }} --appendonly yes`.
+  - Web application securely references `${{ falkordb.FALKORDB_PASSWORD }}` via Railway platform secrets.
+  - Pinned to verified immutable image `falkordb/falkordb-server:6.0.2` (`sha256:8e4fe29e6646890a9deaf2f009ad2bc5e592d79fe9cd718810c3a97a8bcd34c0`).
+- [ ] **Private Networking**:
+  - FalkorDB service has **no public domain** and **no public TCP proxy** on port 6379.
+  - Web application connects via private DNS: `${{ falkordb.RAILWAY_PRIVATE_DOMAIN }}:6379`.
+  - Port 6379 is completely unreachable from the public internet.
+- [ ] **Persistence**:
+  - Persistent volume attached to FalkorDB service mounted strictly at `/var/lib/falkordb/data`.
+  - Target graph strictly designated as `threatpath_demo`.
+  - Graph data survives container restarts, redeployments, and crashes.
+- [ ] **Public API Write Protections**:
+  - Consequential actions (`SIMULATE_ISOLATE_HOST`, `SIMULATE_DISABLE_ACCOUNT`) enforce mandatory human approval (`WAITING_FOR_APPROVAL`).
+  - Execution strictly rejects unapproved actions with HTTP 403 Forbidden.
+  - Simulated actions only mutate sandboxed memory/graph state; zero real-world infrastructure impact.
+  - Multi-user isolation enabled via `X-Session-ID` headers to prevent cross-judge interference.
+  - Unknown `/api/...` endpoints strictly return JSON 404 and never fall through to HTML.
+- [ ] **Health Checks**:
+  - Health check path configured as `/api/health` with 120-second startup timeout.
+  - `/api/health` returns structured status (`healthy`, `connected`, active graph) without leaking passwords or connection strings.
+  - Database client employs bounded timeouts (5s socket / 3s connect) to prevent process deadlock.
+
+---
+
+## 5. Remote Graph Seeding Procedure (In-Network Execution)
+
+> [!IMPORTANT]
+> **Railway Private Network Boundary:**
+> FalkorDB has **no public domain or TCP proxy** and listens solely on Railway's internal private mesh (`${{ falkordb.RAILWAY_PRIVATE_DOMAIN }}:6379`). Railway's private DNS is only resolvable by containers running **inside** the Railway project environment.
+> 
+> Therefore, remote seeding **cannot** be executed directly from your local laptop against the private hostname. It must be executed from inside Railway's private network using one of the two guarded procedures below.
+> 
+> Seeding is kept **strictly separate from web application startup** so regular redeployments or container restarts never unexpectedly overwrite or reseed the graph.
 
 ### Safety Safeguards
-- Seeding **NEVER** runs automatically on application startup.
+- Seeding **NEVER** runs automatically on web application startup.
+- Seeding strictly targets the dedicated remote graph: `threatpath_demo`.
+- Seeding strictly rejects running against `social` or local development graphs (`threatpath_dev`).
 - Seeding requires the explicit `--confirm` CLI flag.
-- Seeding is idempotent (`MERGE`-based) and will **never** drop or erase the graph.
-- Seeding strictly rejects running against the `social` or local practice graphs.
+- Seeding is idempotent (`MERGE`-based) and will **never** drop, erase, or truncate existing graph data.
 
-### Seeding Command
-You can run the seeding command locally with remote credentials or via Railway CLI:
+---
 
-```bash
-# Using local CLI pointing to remote database:
-FALKORDB_HOST="<railway-private-or-proxied-host>" \
-FALKORDB_PORT=6379 \
-FALKORDB_PASSWORD="<your-falkordb-password>" \
-FALKORDB_GRAPH=threatpath_demo \
-./venv/bin/python -m scripts.seed_remote --confirm
-```
+### Method A: Web Container Terminal (Recommended & Fastest)
 
-### Seeding Output Verification
-The seed utility will verify and report:
+Once the `threatpath-web` service is deployed and healthy:
+
+1. In the Railway dashboard, click on the **`threatpath-web`** service.
+2. Navigate to the **Deployments** tab and click on the currently active deployment.
+3. Click the **Terminal** tab to open an interactive shell inside the running container.
+4. Execute the guarded seed command:
+   ```bash
+   python -m scripts.seed_remote --confirm
+   ```
+   *(All required database variables `FALKORDB_HOST`, `FALKORDB_PORT`, `FALKORDB_PASSWORD`, and `FALKORDB_GRAPH` are already present in the container's environment).*
+
+5. Confirm the verification table prints all 4 alerts and node/relationship counts.
+
+---
+
+### Method B: Dedicated One-Off Seeder Job (Headless)
+
+If you prefer an automated or headless one-off job:
+
+1. In the project canvas, click **+ Create** -> **GitHub Repo** -> select `ThreatPath`.
+2. Name the service: `threatpath-seeder`.
+3. In **Settings**:
+   - **Deploy -> Start Command**: Set to:
+     ```bash
+     python -m scripts.seed_remote --confirm
+     ```
+   - **Deploy -> Restart Policy**: Set to **`Never`** (ensures it runs once and stops).
+4. In **Variables**, add the same database variables:
+   - `FALKORDB_HOST` = `${{ falkordb.RAILWAY_PRIVATE_DOMAIN }}`
+   - `FALKORDB_PORT` = `6379`
+   - `FALKORDB_PASSWORD` = `${{ falkordb.FALKORDB_PASSWORD }}`
+   - `FALKORDB_GRAPH` = `threatpath_demo`
+5. Click **Deploy**. Check the deployment logs to confirm successful seeding output.
+6. Once completed, **Delete** the `threatpath-seeder` service in Railway so it does not persist or re-run.
+
+---
+
+### Seeding Verification Output
+Both methods will verify and report:
 1. `alert-sec-001` (Scenario A: Suspicious Interactive Logon & Beaconing Activity)
 2. `alert-sec-002` (Scenario B: Single Inconclusive Beaconing Indicator)
 3. `alert-sec-003` (Scenario C: High-Severity CVE on Exposed DMZ Host)
@@ -165,7 +240,7 @@ The seed utility will verify and report:
 
 ---
 
-## 5. Public URL Verification Checklist
+## 6. Public URL Verification Checklist
 
 Once deployed and seeded, perform these checks against the public HTTPS URL:
 
@@ -197,7 +272,7 @@ Once deployed and seeded, perform these checks against the public HTTPS URL:
 
 ---
 
-## 6. Rollback, Redeployment & Operational Risks
+## 7. Rollback, Redeployment & Operational Risks
 
 - **Zero-Data Loss Redeployments:** Graph data resides on the mounted persistent volume at `/var/lib/falkordb/data`. Redeploying or updating the ThreatPath web container will **never** alter graph data.
 - **Volume Unmounting during Redeployment:** Reconfiguring the FalkorDB service volume may incur brief database downtime (< 30 seconds). The web application handles transient database unreachability with graceful timeouts and informative degraded health status.

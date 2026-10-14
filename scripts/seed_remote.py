@@ -69,13 +69,14 @@ def main():
     parser.add_argument(
         "--graph",
         type=str,
-        default=None,
-        help="Override target graph name (default: FALKORDB_GRAPH from environment, typically 'threatpath_demo')"
+        default="threatpath_demo",
+        help="Target remote graph name (defaults strictly to 'threatpath_demo')"
     )
 
     args = parser.parse_args()
 
-    target_graph = args.graph or settings.FALKORDB_GRAPH
+    # Explicitly enforce threatpath_demo unless specifically passed
+    target_graph = args.graph or "threatpath_demo"
 
     # Safeguard 1: Explicit confirmation required
     if not args.confirm:
@@ -83,9 +84,12 @@ def main():
         logger.info("Usage: python -m scripts.seed_remote --confirm")
         sys.exit(1)
 
-    # Safeguard 2: Warn if targeting local dev or social graph
-    if target_graph in ["social"]:
-        logger.error(f"CRITICAL ERROR: Attempted to seed protected graph '{target_graph}'. Operation aborted.")
+    # Safeguard 2: Strictly protect local practice graphs (social and threatpath_dev)
+    if target_graph in ["social", "threatpath_dev"]:
+        logger.error(
+            f"SAFETY ABORT: Refusing to seed protected graph '{target_graph}'. "
+            f"Remote seeding strictly targets 'threatpath_demo' to safeguard local development and practice graphs."
+        )
         sys.exit(1)
 
     logger.info("=" * 60)
