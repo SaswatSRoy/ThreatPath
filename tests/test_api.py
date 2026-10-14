@@ -215,3 +215,56 @@ def test_scenario_c_api_execution_and_verification_is_escalation_not_containment
     assert "isolated" not in details
     assert "vlan" not in details
 
+
+def test_unknown_api_endpoint_returns_404_not_html():
+    """
+    Requirement 5: Unknown API endpoints must not silently return index.html.
+    """
+    response = client.get("/api/unknown_nonexistent_endpoint")
+    assert response.status_code == 404
+    assert "json" in response.headers.get("content-type", "").lower()
+    data = response.json()
+    assert "not found" in data.get("detail", "").lower()
+
+
+def test_root_serves_html_when_requested_by_browser():
+    """
+    Requirement 5: Browser navigation to root must serve frontend HTML when built.
+    """
+    from pathlib import Path
+    dist_index = Path(__file__).resolve().parent.parent / "frontend" / "dist" / "index.html"
+
+    response = client.get("/", headers={"Accept": "text/html,application/xhtml+xml"})
+    assert response.status_code == 200
+    if dist_index.exists():
+        assert "text/html" in response.headers.get("content-type", "")
+    else:
+        assert response.json()["project"] == "ThreatPath"
+
+
+def test_investigation_survives_cache_clear_via_falkordb_reload():
+    """
+    Requirement 10: Investigation records reload from FalkorDB provenance even after cache clear/restart.
+    """
+    from backend.api.routes import INVESTIGATION_CACHE
+
+    # Create investigation
+    inv_resp = client.post(
+        "/api/investigations",
+        json={"alert_id": "alert-sec-001", "investigation_prompt": "Audit persistence"}
+    )
+    assert inv_resp.status_code == 200
+    inv_id = inv_resp.json()["id"]
+
+    # Clear in-memory cache simulating backend restart
+    INVESTIGATION_CACHE.clear()
+    assert inv_id not in INVESTIGATION_CACHE
+
+    # Fetch investigation again
+    reload_resp = client.get(f"/api/investigations/{inv_id}")
+    assert reload_resp.status_code == 200
+    reloaded = reload_resp.json()
+    assert reloaded["id"] == inv_id
+    assert reloaded["alert_id"] == "alert-sec-001"
+    assert reloaded["status"] == "completed"
+

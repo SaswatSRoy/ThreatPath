@@ -1,0 +1,33 @@
+# Version control
+.git
+.gitignore
+
+# Environment & Secrets
+.env
+.env.*
+!.env.example
+
+# Local Python Environments & Caches
+.venv
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local Node & Frontend Artifacts
+**/node_modules/
+frontend/dist/
+frontend/.oxlintrc.json
+
+# Local logs & audits
+*.log
+local_logs/
+AUDIT.md
+
+# OS metadata
+.DS_Store
+Thumbs.db

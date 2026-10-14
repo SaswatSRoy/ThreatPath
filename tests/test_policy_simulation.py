@@ -12,7 +12,7 @@ from backend.models import (
 
 @pytest.fixture(autouse=True)
 def reset_simulated_fleet():
-    simulated_env.reset()
+    simulated_env.reset(clear_storage=True)
 
 
 def test_consequential_action_requires_approval():
@@ -178,4 +178,96 @@ def test_action_verification_is_strictly_action_specific():
         verified = policy_engine.execute_simulation(rec.id)
         assert verified.status == ActionStatus.VERIFIED
         assert expected_keyword in verified.verification_details
+
+
+def test_simulated_fleet_state_survives_restart():
+    """
+    Requirement 10: Simulated host isolation, account disablement, and indicator blocking
+    must survive application restarts.
+    """
+    from backend.policy import SimulatedEnvironment
+
+    # 1. Propose, approve, and execute host isolation
+    record = policy_engine.propose_action(
+        action_type=ResponseActionType.SIMULATE_ISOLATE_HOST,
+        target_entity="host-jump-prod-01",
+        target_type="host",
+        justification="Restart durability test"
+    )
+    policy_engine.approve_action(record.id)
+    verified = policy_engine.execute_simulation(record.id)
+    assert verified.status == ActionStatus.VERIFIED
+    assert simulated_env.hosts["host-jump-prod-01"]["network_state"] == "isolated"
+
+    # 2. Simulate process restart by instantiating a completely fresh SimulatedEnvironment
+    restarted_env = SimulatedEnvironment(auto_load=True)
+
+    # 3. Verify state reloaded successfully
+    reloaded_action = restarted_env.get_action(record.id)
+    assert reloaded_action is not None
+    assert reloaded_action.status == ActionStatus.VERIFIED
+    assert reloaded_action.target_entity == "host-jump-prod-01"
+    assert "isolated VLAN" in reloaded_action.verification_details
+
+    # 4. Verify simulated host reflects durable isolated state
+    assert restarted_env.hosts["host-jump-prod-01"]["network_state"] == "isolated"
+    assert restarted_env.hosts["host-jump-prod-01"]["isolated"] is True
+
+
+def test_unapproved_action_remains_unapproved_across_restart():
+    """
+    Requirement 10: A restart must not turn an unapproved action into an approved action.
+    """
+    from backend.policy import SimulatedEnvironment
+
+    # Propose consequential action that requires approval
+    record = policy_engine.propose_action(
+        action_type=ResponseActionType.SIMULATE_DISABLE_ACCOUNT,
+        target_entity="id-jdoe",
+        target_type="identity",
+        justification="Pending review"
+    )
+    assert record.status == ActionStatus.WAITING_FOR_APPROVAL
+
+    # Simulate process restart
+    restarted_env = SimulatedEnvironment(auto_load=True)
+    reloaded = restarted_env.get_action(record.id)
+
+    assert reloaded is not None
+    assert reloaded.status == ActionStatus.WAITING_FOR_APPROVAL
+    assert reloaded.approved_at is None
+    # Account must still be active
+    assert restarted_env.accounts["id-jdoe"]["status"] == "active"
+    assert restarted_env.accounts["id-jdoe"]["disabled"] is False
+
+
+def test_session_isolated_simulation_state():
+    """
+    Requirement 10: Multi-user session isolation prevents one judge's actions
+    from corrupting another judge's investigation experience.
+    """
+    session_alpha = "judge-session-alpha"
+    session_beta = "judge-session-beta"
+
+    # Judge Alpha isolates host-auth-portal-01
+    rec_alpha = policy_engine.propose_action(
+        action_type=ResponseActionType.SIMULATE_ISOLATE_HOST,
+        target_entity="host-auth-portal-01",
+        target_type="host",
+        justification="Judge Alpha test",
+        session_id=session_alpha
+    )
+    policy_engine.approve_action(rec_alpha.id)
+    verified_alpha = policy_engine.execute_simulation(rec_alpha.id)
+    assert verified_alpha.status == ActionStatus.VERIFIED
+
+    # In Judge Alpha's session, host is isolated
+    host_alpha = simulated_env.get_host("host-auth-portal-01", session_id=session_alpha)
+    assert host_alpha["network_state"] == "isolated"
+    assert host_alpha["isolated"] is True
+
+    # In Judge Beta's session, host remains unisolated and active
+    host_beta = simulated_env.get_host("host-auth-portal-01", session_id=session_beta)
+    assert host_beta["network_state"] == "connected"
+    assert host_beta["isolated"] is False
 

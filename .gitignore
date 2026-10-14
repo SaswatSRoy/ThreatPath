@@ -33,3 +33,7 @@ scratch/
 .idea/
 *.swp
 *.swo
+
+# Runtime local data & audit
+data/
+AUDIT.md

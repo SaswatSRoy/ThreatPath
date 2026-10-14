@@ -22,7 +22,9 @@ class DatabaseManager:
             self._client = FalkorDB(
                 host=self.host,
                 port=self.port,
-                password=self.password if self.password else None
+                password=self.password if self.password else None,
+                socket_timeout=5,
+                socket_connect_timeout=3
             )
         return self._client
 
@@ -62,7 +64,8 @@ class DatabaseManager:
             "CREATE INDEX FOR (v:Vulnerability) ON (v.id)",
             "CREATE INDEX FOR (ast:Asset) ON (ast.id)",
             "CREATE INDEX FOR (inv:Investigation) ON (inv.id)",
-            "CREATE INDEX FOR (ra:ResponseAction) ON (ra.id)"
+            "CREATE INDEX FOR (ra:ResponseAction) ON (ra.id)",
+            "CREATE INDEX FOR (sm:SimulatedState) ON (sm.key)"
         ]
         g = self.get_graph(target_graph)
         for idx_query in indexes:

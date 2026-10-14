@@ -41,7 +41,8 @@ class InvestigationOrchestrator:
         self,
         alert_id: str,
         user_prompt: Optional[str] = None,
-        graph_name: Optional[str] = None
+        graph_name: Optional[str] = None,
+        session_id: str = "demo_default"
     ) -> InvestigationRecord:
         investigation_id = f"inv-{uuid.uuid4().hex[:8]}"
         started_at = datetime.now(timezone.utc).isoformat()
@@ -97,7 +98,8 @@ class InvestigationOrchestrator:
                 target_entity=target_host,
                 target_type="host",
                 justification=f"Immediate host isolation proposed to sever active C2 connection and protect critical assets.",
-                investigation_id=investigation_id
+                investigation_id=investigation_id,
+                session_id=session_id
             )
         elif assessment.classification == CompromiseClassification.SUSPICIOUS:
             # Perimeter block or escalate
@@ -108,7 +110,8 @@ class InvestigationOrchestrator:
                     target_entity=ind_id,
                     target_type="indicator",
                     justification="Propose perimeter block for suspicious external IP.",
-                    investigation_id=investigation_id
+                    investigation_id=investigation_id,
+                    session_id=session_id
                 )
             else:
                 recommended_action = policy_engine.propose_action(
@@ -116,7 +119,8 @@ class InvestigationOrchestrator:
                     target_entity=alert_id,
                     target_type="incident",
                     justification="Vulnerable host exposure requires prioritized patch remediation ticket.",
-                    investigation_id=investigation_id
+                    investigation_id=investigation_id,
+                    session_id=session_id
                 )
 
         completed_at = datetime.now(timezone.utc).isoformat()

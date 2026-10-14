@@ -131,6 +131,7 @@ class ResponseActionRecord(BaseModel):
     verified_at: Optional[str] = None
     verification_details: Optional[str] = None
     investigation_id: Optional[str] = None
+    session_id: Optional[str] = "demo_default"
 
 
 class InvestigationRecord(BaseModel):

@@ -3,7 +3,7 @@ ThreatPath REST API Endpoints
 """
 import logging
 from typing import List, Dict, Any, Optional
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, status, Header
 from backend.config import settings
 from backend.database import db_manager
 from backend.cypher_queries import graph_queries
@@ -16,7 +16,10 @@ from backend.models import (
     ResponseActionRecord,
     ActionApprovalRequest,
     ActionDenialRequest,
-    GraphData
+    GraphData,
+    Assessment,
+    CompromiseClassification,
+    RemediationPriority
 )
 
 logger = logging.getLogger(__name__)
@@ -76,7 +79,10 @@ def get_alert(alert_id: str) -> AlertSummary:
 
 
 @router.post("/investigations", response_model=InvestigationRecord)
-def create_investigation(request: InvestigationRequest) -> InvestigationRecord:
+def create_investigation(
+    request: InvestigationRequest,
+    x_session_id: Optional[str] = Header(None, alias="X-Session-ID")
+) -> InvestigationRecord:
     """
     Trigger autonomous graph-native investigation for the requested alert.
     Queries FalkorDB, executes deterministic scoring, generates narrative, and persists provenance.
@@ -84,7 +90,8 @@ def create_investigation(request: InvestigationRequest) -> InvestigationRecord:
     try:
         record = orchestrator.investigate_alert(
             alert_id=request.alert_id,
-            user_prompt=request.investigation_prompt
+            user_prompt=request.investigation_prompt,
+            session_id=x_session_id or "demo_default"
         )
         INVESTIGATION_CACHE[record.id] = record
         return record
@@ -100,12 +107,54 @@ def get_investigation(investigation_id: str) -> InvestigationRecord:
     """
     Retrieve cached or persisted investigation record.
     """
-    if investigation_id not in INVESTIGATION_CACHE:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Investigation '{investigation_id}' not found in current session cache"
-        )
-    return INVESTIGATION_CACHE[investigation_id]
+    if investigation_id in INVESTIGATION_CACHE:
+        return INVESTIGATION_CACHE[investigation_id]
+
+    # Attempt to reload from FalkorDB provenance
+    try:
+        query = """
+        MATCH (inv:Investigation {id: $id})-[:INVESTIGATES]->(a:Alert)
+        OPTIONAL MATCH (inv)-[:RECOMMENDED_ACTION]->(ra:ResponseAction)
+        RETURN inv.id, inv.alert_id, inv.started_at, inv.completed_at,
+               inv.classification, inv.priority, inv.raw_score, inv.narrative,
+               ra.id
+        """
+        res = db_manager.execute_query(query, {"id": investigation_id})
+        if res.result_set:
+            row = res.result_set[0]
+            alert_id = row[1]
+            subgraph = graph_queries.get_full_investigation_graph(alert_id)
+            ra_id = row[8]
+            rec_action = simulated_env.get_action(ra_id) if ra_id else None
+
+            assessment = Assessment(
+                classification=CompromiseClassification(row[4]),
+                raw_score=float(row[6]) if row[6] is not None else 0.5,
+                remediation_priority=RemediationPriority(row[5]),
+                uncertainty_explanation=""
+            )
+            record = InvestigationRecord(
+                id=row[0],
+                alert_id=alert_id,
+                started_at=row[2],
+                completed_at=row[3],
+                status="completed",
+                mode="deterministic",
+                assessment=assessment,
+                narrative=row[7] or "",
+                graph=subgraph,
+                recommended_action=rec_action,
+                provenance_path_count=len(subgraph.edges)
+            )
+            INVESTIGATION_CACHE[investigation_id] = record
+            return record
+    except Exception as e:
+        logger.debug(f"Could not load investigation {investigation_id} from FalkorDB: {e}")
+
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail=f"Investigation '{investigation_id}' not found in current session cache"
+    )
 
 
 @router.get("/investigations/{investigation_id}/evidence")

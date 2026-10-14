@@ -80,6 +80,13 @@ def seed_graph(graph_name: Optional[str] = None) -> dict:
     logger.info(f"Seeding completed successfully on '{target_graph}'.")
     logger.info(f"Summary: {node_count} nodes, {edge_count} relationships, {len(alerts)} alerts.")
 
+    # 4. Re-apply any active persisted simulated fleet states so seed does not wipe actions
+    try:
+        from backend.policy import simulated_env
+        simulated_env.reapply_persisted_state(target_graph)
+    except Exception as e:
+        logger.debug(f"Notice: could not reapply simulated state after seed: {e}")
+
     return {
         "graph_name": target_graph,
         "nodes": node_count,

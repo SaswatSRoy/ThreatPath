@@ -2,7 +2,8 @@
 
 [![Graph Hacks 2026](https://img.shields.io/badge/Graph_Hacks_2026-Track_01:_Agents_That_Act_on_Connected_Data-0284c7?style=for-the-badge)](https://graphhacks.devpost.com/)
 [![Database: FalkorDB](https://img.shields.io/badge/Database-FalkorDB_Edge-c084fc?style=for-the-badge&logo=redis)](https://docs.falkordb.com/)
-[![Tests: 24 Passed](https://img.shields.io/badge/Tests-24_Passed_(100%25)-10b981?style=for-the-badge)](tests/)
+[![Tests: 38 Passed](https://img.shields.io/badge/Tests-38_Passed_(100%25)-10b981?style=for-the-badge)](tests/)
+[![Docker: Multi--Stage_Production](https://img.shields.io/badge/Docker-Multi--Stage_Prod_Verified-38bdf8?style=for-the-badge&logo=docker)](Dockerfile)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue?style=for-the-badge)](LICENSE)
 
 > **ThreatPath** is an autonomous defensive security investigation agent built natively on **FalkorDB** for **Graph Hacks 2026 (Track 01 — Agents That Act on Connected Data)**. It investigates suspicious security alerts by traversing multi-hop causal paths across identities, events, hosts, process trees, network indicators, MITRE ATT&CK techniques, known exploited vulnerabilities (CISA KEV), and critical business assets.
@@ -218,13 +219,51 @@ Open **`http://localhost:5173`** in your browser.
 
 ---
 
-## 10. REST API Endpoints
+## 10. Production Multi-Stage Docker Build
+
+ThreatPath packages both the compiled React frontend and the FastAPI backend into a single self-contained, production-grade container image:
+
+```bash
+# 1. Build the production multi-stage image
+docker build -t threatpath:prod .
+
+# 2. Run the production container on port 8000
+docker run -p 8000:8000 \
+  -e FALKORDB_HOST=127.0.0.1 \
+  -e FALKORDB_PORT=6379 \
+  -e FALKORDB_GRAPH=threatpath_dev \
+  -e APP_ENV=production \
+  threatpath:prod
+```
+The unified container serves compiled React static assets directly from `/` and handles API requests under `/api/...` on the same origin with zero cross-origin configuration.
+
+---
+
+## 11. Cloud Deployment (Railway Ready)
+
+ThreatPath is fully configured for deployment on Railway or any Docker-compatible PaaS platform:
+
+- **Single Web Service**: Directly deploys from the root `Dockerfile` using `railway.json`.
+- **Private FalkorDB Service**: Uses official `falkordb/falkordb-server`, mounted to a persistent volume at `/var/lib/falkordb/data`, protected by Redis password authentication (`REDIS_ARGS=--requirepass ...`), with zero public network exposure.
+- **Dedicated Demo Graph**: Uses isolated graph `threatpath_demo`.
+- **Durable Simulation State**: Simulated containment and incident state transitions are persisted in FalkorDB and survive container restarts.
+- **Multi-User Demo Isolation**: Sessions are isolated by demo session ID so multiple judges never corrupt each other's investigations.
+- **Safe Remote Seeding**: Dedicated idempotent seed utility with strict safeguards:
+  ```bash
+  python -m scripts.seed_remote --confirm
+  ```
+
+See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for step-by-step Railway dashboard provisioning instructions and checklists.
+
+---
+
+## 12. REST API Endpoints
 
 - `GET /api/health` — Verifies FalkorDB connectivity and operational mode.
 - `GET /api/alerts` — Lists all registered security alerts in FalkorDB.
 - `GET /api/alerts/{alert_id}` — Retrieves an individual alert.
 - `POST /api/investigations` — Triggers graph-native autonomous investigation.
-- `GET /api/investigations/{id}` — Retrieves investigation record.
+- `GET /api/investigations/{id}` — Retrieves investigation record (persisted across restarts).
 - `GET /api/investigations/{id}/evidence` — Retrieves structured evidence & Cytoscape graph.
 - `POST /api/actions/{id}/approve` — Analyst approval gate.
 - `POST /api/actions/{id}/deny` — Analyst denial gate.
@@ -233,17 +272,18 @@ Open **`http://localhost:5173`** in your browser.
 
 ---
 
-## 11. Security & Safety Boundaries
+## 13. Security & Safety Boundaries
 
 - **Zero Production Risk**: All containment actions are strictly simulated. ThreatPath never isolates real endpoints, modifies real network controls, or executes arbitrary shell commands.
 - **Strict Parameterization**: All Cypher queries use parameterized inputs to prevent injection.
 - **Credential Protection**: Database passwords and API keys are never exposed in tool arguments or logged.
-- **Localhost Binding**: All services bind exclusively to `127.0.0.1` by default.
+- **Isolated Private Database**: The production database has no public domain or TCP proxy.
+- **Approval Gate**: Consequential actions (host isolation, account disablement) strictly require manual approval before execution.
 
 ---
 
-## 12. AI-Assisted Development Disclosure
+## 14. AI-Assisted Development Disclosure
 
 In accordance with Graph Hacks 2026 rules:
 - ThreatPath was designed and engineered with assistance from **Google Antigravity**.
-- All FalkorDB Cypher queries, graph schemas, deterministic scoring rules, approval gates, and simulation verifiers were designed for this project, audited against a live local FalkorDB container, and verified through 24 automated unit and integration tests.
+- All FalkorDB Cypher queries, graph schemas, deterministic scoring rules, approval gates, multi-stage Docker builds, and simulation verifiers were designed for this project, audited against live FalkorDB containers, and validated through 38 automated unit, integration, and ablation tests.

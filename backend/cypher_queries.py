@@ -222,7 +222,7 @@ class ThreatPathGraphQueries:
         query = """
         MATCH p = (a:Alert)-[*1..4]-(target)
         WHERE a.id = $alert_id
-          AND NOT any(n IN nodes(p) WHERE n:Investigation OR n:ResponseAction)
+          AND NOT any(n IN nodes(p) WHERE n:Investigation OR n:ResponseAction OR n:SimulatedState)
         RETURN p
         LIMIT 40
         """

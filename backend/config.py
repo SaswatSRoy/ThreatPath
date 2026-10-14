@@ -9,7 +9,11 @@ class Settings(BaseSettings):
     APP_ENV: str = "development"
     APP_HOST: str = "127.0.0.1"
     APP_PORT: int = 8000
-    
+    PORT: Optional[int] = None
+
+    @property
+    def effective_port(self) -> int:
+        return self.PORT or self.APP_PORT
     # FalkorDB settings
     FALKORDB_HOST: str = "127.0.0.1"
     FALKORDB_PORT: int = 6379

@@ -98,6 +98,20 @@ Open your browser to: **`http://localhost:5173`**
    - Missing Evidence explicitly notes:
      `"CRITICAL: Known vulnerability detected on host, but zero execution or exploitation telemetry observed."`
    - Proves the system strictly distinguishes exposure from active compromise.
+   - Recommended Action is `SIMULATE_ESCALATE_INCIDENT`.
+   - On execution, verification states: `"Simulated ticketing check: Incident dispatch ticket generated with high priority."` (Does NOT claim containment or isolation).
+
+---
+
+### Demo Walkthrough 4: Scenario D — Disconnected Entities (Preventing False Correlation)
+1. In the Alert Queue, select:
+   `Scenario D: Distributed SSH Password-Spray Attempt (alert-sec-004)`
+2. Click **"Run Graph Investigation"**.
+3. **Observe Graph and Findings**:
+   - Multiple distinct external scanner indicators attempt failed logins on staging bastion.
+   - Zero successful authentications; zero processes spawned; zero critical asset exposures.
+   - Classification: `SUSPICIOUS` with low confidence.
+   - Demonstrates that ThreatPath follows real graph topology and does NOT falsely correlate unlinked entities or fabricate single-event narratives.
 
 ---
 
@@ -114,3 +128,28 @@ To run the mandatory graph ablation test in isolation:
 ./venv/bin/pytest tests/test_graph_ablation.py -v
 ```
 Notice how deleting the `CONNECTED_TO` edge in FalkorDB directly alters the classification from `likely_compromise` to `suspicious` without hardcoded shortcuts!
+
+---
+
+## Part 4: Containerized Production Demonstration
+
+To demonstrate ThreatPath in its unified production container:
+
+```bash
+# Build the production container
+docker build -t threatpath:prod .
+
+# Run on port 8080 against FalkorDB
+docker run --rm -p 8080:8000 \
+  --add-host=host.docker.internal:host-gateway \
+  -e FALKORDB_HOST=host.docker.internal \
+  -e FALKORDB_PORT=6379 \
+  -e FALKORDB_GRAPH=threatpath_dev \
+  -e APP_ENV=production \
+  --name threatpath-prod-demo \
+  threatpath:prod
+```
+
+Navigate to `http://localhost:8080`:
+- Verified: Single container serves compiled React/Vite assets and FastAPI backend on the same origin.
+- Tested: End-to-end investigation, approval, simulated execution, and restart durability.

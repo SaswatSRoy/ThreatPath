@@ -91,6 +91,19 @@ export function App() {
     }
   };
 
+  const getOrCreateSessionId = (): string => {
+    try {
+      let sid = sessionStorage.getItem('threatpath_session_id');
+      if (!sid) {
+        sid = 'session-' + Math.random().toString(36).substring(2, 10);
+        sessionStorage.setItem('threatpath_session_id', sid);
+      }
+      return sid;
+    } catch {
+      return 'demo_default';
+    }
+  };
+
   const runInvestigation = async () => {
     if (!selectedAlert || investigating) return;
     setInvestigating(true);
@@ -98,7 +111,10 @@ export function App() {
     try {
       const res = await fetch('/api/investigations', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Session-ID': getOrCreateSessionId()
+        },
         body: JSON.stringify({
           alert_id: selectedAlert.id,
           investigation_prompt: prompt
