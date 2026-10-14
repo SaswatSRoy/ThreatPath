@@ -144,6 +144,36 @@ export const ResponseActionPanel: React.FC<ResponseActionPanelProps> = ({
     }
   };
 
+  const getActionSuccessMessage = (actionRecord: ResponseActionRecord) => {
+    switch (actionRecord.action_type) {
+      case 'SIMULATE_ISOLATE_HOST':
+        return 'Simulated host containment successfully executed and interface isolation verified.';
+      case 'SIMULATE_DISABLE_ACCOUNT':
+        return 'Simulated account disablement successfully executed and directory state verified.';
+      case 'SIMULATE_BLOCK_INDICATOR':
+        return 'Simulated perimeter block rule applied and boundary drop telemetry verified.';
+      case 'SIMULATE_ESCALATE_INCIDENT':
+        return 'Simulated incident escalation ticket successfully dispatched to SOC queue (no host containment executed).';
+      default:
+        return `Simulated action '${actionRecord.action_type}' successfully executed and verified.`;
+    }
+  };
+
+  const getActionExecuteLabel = (actionType: string) => {
+    switch (actionType) {
+      case 'SIMULATE_ISOLATE_HOST':
+        return 'Execute Host Isolation & Verify';
+      case 'SIMULATE_DISABLE_ACCOUNT':
+        return 'Execute Account Disablement & Verify';
+      case 'SIMULATE_BLOCK_INDICATOR':
+        return 'Apply Firewall Block & Verify';
+      case 'SIMULATE_ESCALATE_INCIDENT':
+        return 'Dispatch Escalation Ticket & Verify';
+      default:
+        return 'Execute & Verify Simulation';
+    }
+  };
+
   return (
     <div className="glass-panel" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
@@ -264,13 +294,13 @@ export const ResponseActionPanel: React.FC<ResponseActionPanelProps> = ({
               boxShadow: '0 2px 12px rgba(56, 189, 248, 0.3)'
             }}
           >
-            {loading ? <Loader2 size={14} className="spin-slow" /> : <Play size={14} />} Execute & Verify Simulation
+            {loading ? <Loader2 size={14} className="spin-slow" /> : <Play size={14} />} {getActionExecuteLabel(action.action_type)}
           </button>
         )}
 
         {action.status === 'VERIFIED' && (
-          <div style={{ fontSize: '11px', color: '#10b981', display: 'flex', alignItems: 'center', gap: '4px' }}>
-            <CheckCircle2 size={14} /> Simulated containment successfully executed and cryptographically verified.
+          <div style={{ fontSize: '11px', color: '#10b981', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <CheckCircle2 size={14} /> {getActionSuccessMessage(action)}
           </div>
         )}
       </div>

@@ -122,3 +122,64 @@ def test_scenario_d_disconnected_entities_not_correlated():
 
     assert result.classification == CompromiseClassification.INSUFFICIENT_EVIDENCE
     assert "ind-unrelated-scanner" not in result.supporting_evidence_ids
+
+
+def test_scenario_d_narrative_grounding_no_fake_user_or_single_event():
+    """
+    Regression Test for Issue 1 & 4:
+    Scenario D describes repeated SSH password spray failures (failed_ssh, BLOCKED).
+    1. Scoring uncertainty must reflect blocked/spray activity and NEVER claim 'single anomalous authentication'.
+    2. Narrative must not invent a fake 'Unknown User (STANDARD)'.
+    """
+    from backend.agent.llm_provider import DeterministicFallbackProvider
+
+    alert = {
+        "id": "alert-sec-004",
+        "title": "High Volume Failed SSH Logons (External Password Spray)",
+        "severity": "MEDIUM",
+        "alert_type": "auth_failure_burst"
+    }
+    context = {
+        "host": {"hostname": "bastion-stage.corp.internal", "environment": "staging", "os": "Linux Ubuntu 22.04"},
+        "identity": {},  # No identity in graph
+        "event": {
+            "id": "evt-401",
+            "event_type": "failed_ssh",
+            "action_status": "BLOCKED",
+            "description": "Repeated failed SSH logon burst from untrusted external IP; blocked by host security controls."
+        },
+        "techniques": [{"id": "t4", "mitre_id": "T1110.003", "name": "Password Spraying", "tactic": "Credential Access"}]
+    }
+    attack_paths = {"paths": [], "processes": [], "indicators": []}
+    asset_exposures = []
+    vuln_exposures = []
+    related_alerts = []
+
+    assessment = assessment_engine.assess_investigation(
+        alert, context, attack_paths, asset_exposures, vuln_exposures, related_alerts
+    )
+
+    # 1. Uncertainty explanation must reflect actual blocked spray telemetry
+    assert "single anomalous authentication" not in assessment.uncertainty_explanation.lower()
+    assert "authentication failures" in assessment.uncertainty_explanation.lower() or "failed ssh" in assessment.uncertainty_explanation.lower()
+    assert "blocked" in assessment.uncertainty_explanation.lower()
+
+    # 2. Narrative must not claim an Unknown User with STANDARD privileges
+    provider = DeterministicFallbackProvider()
+    narrative_dict = provider.generate_investigation_narrative(alert, context, assessment)
+    narrative = narrative_dict["narrative"]
+
+    assert "Unknown User" not in narrative
+    assert "None identified in graph" in narrative
+    assert "single anomalous authentication" not in narrative.lower()
+
+    # 3. Must distinguish facts, multi-hop traversals, hypotheses, and unknowns
+    assert "#### 1. Observed Evidence (Direct Graph Observations)" in narrative
+    assert "#### 2. Correlated Multi-Hop Relationships (Graph Traversals)" in narrative
+    assert "#### 3. Analytical Inferences & Hypotheses" in narrative
+    assert "#### 4. Missing Evidence & Telemetry Gaps (Unknowns)" in narrative
+    assert "#### 5. Recommended Defensive Action" in narrative
+    assert "[Observed Fact]" in narrative
+    assert "[Hypothesis]" in narrative
+    assert "[Missing Telemetry]" in narrative
+

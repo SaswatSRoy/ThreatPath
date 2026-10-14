@@ -40,10 +40,21 @@ class DeterministicFallbackProvider(BaseLLMProvider):
         assessment: Assessment,
         user_prompt: Optional[str] = None
     ) -> Dict[str, Any]:
+        identity = context.get("identity", {})
+        has_identity = bool(identity and identity.get("username"))
+        identity_str = (
+            f"`{identity.get('username')}` (Role: {identity.get('role', 'N/A')}, Privilege: {identity.get('privilege_level', 'STANDARD')})"
+            if has_identity
+            else "None identified in graph (unauthenticated attempts or automated system event)"
+        )
+
+        event = context.get("event", {})
+        event_type = event.get("event_type", "N/A")
+        action_status = event.get("action_status", "N/A")
+        event_desc = event.get("description", "N/A")
         hostname = context.get("host", {}).get("hostname", "Unknown Host")
-        username = context.get("identity", {}).get("username", "Unknown User")
-        classification = assessment.classification.value
-        priority = assessment.remediation_priority.value.upper()
+        classification = assessment.classification.value if hasattr(assessment.classification, "value") else str(assessment.classification)
+        priority = assessment.remediation_priority.value if hasattr(assessment.remediation_priority, "value") else str(assessment.remediation_priority)
         raw_score = assessment.raw_score
 
         # Structured sections adhering to Section 11 evidence standards
@@ -52,14 +63,14 @@ class DeterministicFallbackProvider(BaseLLMProvider):
             f"**Classification:** `{classification}` | **Priority:** `{priority}` | **Confidence Factor:** `{raw_score}/1.0` (Heuristic)",
             "",
             "#### 1. Observed Evidence (Direct Graph Observations)",
-            f"- **Target Host:** `{hostname}` (OS: {context.get('host', {}).get('os', 'N/A')}, Env: {context.get('host', {}).get('environment', 'N/A')})",
-            f"- **Target Identity:** `{username}` (Role: {context.get('identity', {}).get('role', 'N/A')}, Privilege: {context.get('identity', {}).get('privilege_level', 'STANDARD')})",
-            f"- **Telemetry Event:** `{context.get('event', {}).get('event_type', 'N/A')}` at `{context.get('event', {}).get('timestamp', 'N/A')}`"
+            f"- **Target Host (Observed):** `{hostname}` (OS: {context.get('host', {}).get('os', 'N/A')}, Env: {context.get('host', {}).get('environment', 'N/A')})",
+            f"- **Target Identity (Observed):** {identity_str}",
+            f"- **Telemetry Event (Observed):** `{event_type}` (Status: `{action_status}`) — {event_desc}"
         ]
 
         # Add technique citations
         for t in context.get("techniques", []):
-            lines.append(f"- **ATT&CK Technique:** `{t.get('mitre_id')}` ({t.get('name')}) — {t.get('tactic')}")
+            lines.append(f"- **ATT&CK Technique (Knowledge Mapping):** `{t.get('mitre_id')}` ({t.get('name')}) — {t.get('tactic')}")
 
         lines.extend([
             "",
@@ -68,49 +79,74 @@ class DeterministicFallbackProvider(BaseLLMProvider):
 
         if assessment.relevant_graph_paths:
             for p in assessment.relevant_graph_paths:
-                lines.append(f"- `[Path]` {p}")
+                lines.append(f"- `[Correlated Path]` {p}")
         else:
-            lines.append("- No extended multi-hop execution or C2 paths discovered in FalkorDB.")
+            lines.append("- Zero multi-hop execution, lateral movement, or C2 paths discovered in FalkorDB.")
 
         lines.extend([
             "",
-            "#### 3. Inferences & Hypothesis",
+            "#### 3. Analytical Inferences & Hypotheses",
         ])
 
         if assessment.classification == CompromiseClassification.LIKELY_COMPROMISE:
             lines.append(
-                f"- High probability of active host control: execution of obfuscated scripting on `{hostname}` "
-                "followed by persistent outbound communication to flagged C2 infrastructure indicates hands-on-keyboard activity."
+                f"- `[Hypothesis]` High probability of active host control: execution of obfuscated scripting on `{hostname}` "
+                "followed by outbound socket communication to flagged C2 IP indicates hostile intrusion."
             )
+            lines.append("- `[Unknown]` Initial delivery vector and lateral extent remain unverified hypotheses.")
         elif assessment.classification == CompromiseClassification.SUSPICIOUS:
-            lines.append(
-                f"- Elevated operational risk: host `{hostname}` is vulnerable or shows anomalous patterns, "
-                "requiring immediate patch remediation and defensive observation."
-            )
+            if any("zero execution" in m.lower() for m in assessment.missing_evidence):
+                lines.append(
+                    f"- `[Observed Fact]` Host `{hostname}` runs vulnerable software, but zero hostile child processes or C2 beacons were recorded."
+                )
+                lines.append(
+                    "- `[Hypothesis]` High remediation priority exists due to unpatched framework exposure, but telemetry does NOT establish active exploitation."
+                )
+            else:
+                lines.append(
+                    f"- `[Hypothesis]` Host `{hostname}` exhibited anomalous telemetry patterns requiring defensive triage."
+                )
         else:
-            lines.append(
-                f"- Isolated telemetry anomaly: activity for `{username}` exhibits no downstream indicators of compromise; "
-                "likely benign off-hours operation or false positive threshold trigger."
-            )
+            # Insufficient evidence
+            if action_status.upper() == "BLOCKED" or "failed" in event_type.lower() or "burst" in alert.get("alert_type", "").lower():
+                lines.append(
+                    f"- `[Observed Fact]` Authentication attempts against `{hostname}` failed and were blocked by system security controls."
+                )
+                lines.append(
+                    "- `[Observed Fact]` Zero internal sessions, child processes, or outbound network connections were spawned."
+                )
+                lines.append(
+                    "- `[Hypothesis]` Activity represents external automated password spraying or reconnaissance; no hostile foothold was established."
+                )
+            else:
+                lines.append(
+                    f"- `[Observed Fact]` Single authentication recorded for `{identity.get('username', 'user')}` with valid credentials."
+                )
+                lines.append(
+                    "- `[Hypothesis]` Anomalous location access may represent benign off-hours employee activity; conclusive proof of compromise is absent."
+                )
 
         lines.extend([
             "",
-            "#### 4. Missing Evidence & Contradictions (Unknowns)",
+            "#### 4. Missing Evidence & Telemetry Gaps (Unknowns)",
         ])
         for m in assessment.missing_evidence:
-            lines.append(f"- `[Missing]` {m}")
+            lines.append(f"- `[Missing Telemetry]` {m}")
 
         lines.extend([
             "",
             "#### 5. Recommended Defensive Action",
         ])
         if assessment.classification == CompromiseClassification.LIKELY_COMPROMISE:
-            lines.append(f"- **Recommendation:** Propose `SIMULATE_ISOLATE_HOST` for `{hostname}` to prevent lateral movement to high-value assets.")
+            lines.append(f"- **Recommendation:** Propose `SIMULATE_ISOLATE_HOST` for `{hostname}` to contain confirmed compromised endpoint.")
             lines.append("- **Policy Requirement:** Action impacts production jump infrastructure; **Human Approval Gate is MANDATORY**.")
         elif assessment.classification == CompromiseClassification.SUSPICIOUS:
-            lines.append("- **Recommendation:** Expedite patch scheduling; monitor perimeter logs without disrupting host services.")
+            if assessment.relevant_graph_paths and any("Indicator" in p for p in assessment.relevant_graph_paths):
+                lines.append("- **Recommendation:** Propose `SIMULATE_BLOCK_INDICATOR` at perimeter firewall. No host isolation warranted.")
+            else:
+                lines.append("- **Recommendation:** Propose `SIMULATE_ESCALATE_INCIDENT` for ticketing and expedited patch scheduling. **No host containment or isolation warranted** as exploitation is unproven.")
         else:
-            lines.append("- **Recommendation:** Request user out-of-band verification; maintain standard logging.")
+            lines.append("- **Recommendation:** No automated containment warranted. Request out-of-band user verification or continue monitoring.")
 
         narrative = "\n".join(lines)
 

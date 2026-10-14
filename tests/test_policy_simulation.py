@@ -124,3 +124,58 @@ def test_failed_verification_for_missing_entity():
     failed = policy_engine.execute_simulation(record.id)
     assert failed.status == ActionStatus.FAILED
     assert "not found" in failed.verification_details
+
+
+def test_scenario_c_escalate_incident_verification_not_containment():
+    """
+    Regression Test for Issue 2:
+    Scenario C selects SIMULATE_ESCALATE_INCIDENT.
+    Verification feedback must be action-specific:
+    - Must verify incident escalation ticketing
+    - Must NOT claim host isolation, network disconnection, or containment
+    """
+    record = policy_engine.propose_action(
+        action_type=ResponseActionType.SIMULATE_ESCALATE_INCIDENT,
+        target_entity="api-gw-dmz-02.corp.internal",
+        target_type="host",
+        justification="Escalate unpatched vulnerability to SOC queue"
+    )
+
+    # Escalation is PolicyDecision.ALLOW, so it is pre-approved
+    if record.status == ActionStatus.WAITING_FOR_APPROVAL:
+        approved = policy_engine.approve_action(record.id, approver="Security Operations")
+        assert approved.status == ActionStatus.APPROVED
+    else:
+        assert record.status == ActionStatus.APPROVED
+
+    # Execute simulation
+    verified = policy_engine.execute_simulation(record.id)
+    assert verified.status == ActionStatus.VERIFIED
+
+    # Check verification details: action-specific, NOT containment
+    details = verified.verification_details.lower()
+    assert "ticket" in details or "ticketing" in details
+    assert "containment" not in details
+    assert "vlan" not in details
+    assert "isolated" not in details
+
+
+def test_action_verification_is_strictly_action_specific():
+    """
+    Verify each of the 4 supported action types produces distinct, action-specific verification feedback.
+    """
+    actions = [
+        (ResponseActionType.SIMULATE_ISOLATE_HOST, "host-jump-prod-01", "host", "isolated VLAN"),
+        (ResponseActionType.SIMULATE_DISABLE_ACCOUNT, "id-jdoe", "identity", "marked disabled"),
+        (ResponseActionType.SIMULATE_BLOCK_INDICATOR, "ind-c2-ip", "indicator", "firewall rule applied"),
+        (ResponseActionType.SIMULATE_ESCALATE_INCIDENT, "host-jump-prod-01", "host", "ticketing check"),
+    ]
+
+    for action_type, target_entity, target_type, expected_keyword in actions:
+        rec = policy_engine.propose_action(action_type, target_entity, target_type, "Action verification test")
+        if rec.status == ActionStatus.WAITING_FOR_APPROVAL:
+            rec = policy_engine.approve_action(rec.id)
+        verified = policy_engine.execute_simulation(rec.id)
+        assert verified.status == ActionStatus.VERIFIED
+        assert expected_keyword in verified.verification_details
+

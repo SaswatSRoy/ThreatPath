@@ -144,6 +144,111 @@ def test_graph_ablation_proves_falkordb_dependency(ablation_graph):
     assert "No active network beaconing" in str(ablated_assessment.missing_evidence)
 
 
+def test_graph_ablation_asset_reachability_alters_priority(ablation_graph):
+    """
+    Proves that FalkorDB asset reachability (:CAN_ACCESS) genuinely drives remediation priority.
+    Ablating the relationship drops asset exposure to 0 and drops priority from CRITICAL to HIGH.
+    """
+    queries = ThreatPathGraphQueries(db=db_manager)
+
+    alert = queries.get_alert_by_id("alert-sec-001", graph_name=ABLATION_GRAPH_NAME)
+    context = queries.get_alert_context("alert-sec-001", graph_name=ABLATION_GRAPH_NAME)
+    attack_paths = queries.get_attack_paths("alert-sec-001", graph_name=ABLATION_GRAPH_NAME)
+    vuln_exposures = queries.get_vulnerability_exposure("alert-sec-001", graph_name=ABLATION_GRAPH_NAME)
+    related_alerts = queries.get_related_alerts("alert-sec-001", graph_name=ABLATION_GRAPH_NAME)
+
+    # Baseline with CAN_ACCESS intact
+    baseline_assets = queries.get_asset_exposure("alert-sec-001", graph_name=ABLATION_GRAPH_NAME)
+    assert len(baseline_assets) == 1
+    assert baseline_assets[0]["criticality"] == "CRITICAL"
+
+    # Ablate CAN_ACCESS in FalkorDB
+    ablation_graph.query(
+        "MATCH (h:Host {id: 'host-jump-prod-01'})-[r:CAN_ACCESS]->(ast:Asset {id: 'asset-customer-db'}) DELETE r"
+    )
+
+    # Re-query FalkorDB
+    ablated_assets = queries.get_asset_exposure("alert-sec-001", graph_name=ABLATION_GRAPH_NAME)
+    assert len(ablated_assets) == 0
+
+    ablated_assessment = assessment_engine.assess_investigation(
+        alert.model_dump(), context, attack_paths, ablated_assets, vuln_exposures, related_alerts
+    )
+    # Without critical asset exposure, priority drops from CRITICAL to HIGH
+    assert ablated_assessment.remediation_priority == RemediationPriority.HIGH
+    assert not any("asset" in str(p).lower() for p in ablated_assessment.relevant_graph_paths)
+
+
+def test_graph_ablation_vulnerability_link_alters_score(ablation_graph):
+    """
+    Proves that FalkorDB software vulnerability (:AFFECTED_BY) genuinely drives vulnerability scoring.
+    Ablating the relationship drops vulnerability exposure and lowers classification.
+    """
+    queries = ThreatPathGraphQueries(db=db_manager)
+
+    # Add Scenario C vulnerable software node & CVE to isolated graph
+    ablation_graph.query("""
+    MERGE (a3:Alert {id: "alert-sec-003"})
+    SET a3.title = "Unpatched Public Vulnerability Exposure",
+        a3.severity = "HIGH",
+        a3.alert_type = "vulnerability_exposure"
+    MERGE (e3:Event {id: "evt-301"})
+    SET e3.event_type = "vulnerability_scan",
+        e3.action_status = "DETECTED"
+    MERGE (h3:Host {id: "host-api-gw"})
+    SET h3.hostname = "api-gw-dmz.corp.internal",
+        h3.environment = "production",
+        h3.isolated = false
+    MERGE (s3:Software {id: "sw-apache-struts"})
+    SET s3.name = "Apache Struts",
+        s3.version = "2.5.30"
+    MERGE (v3:Vulnerability {id: "cve-2023-50164"})
+    SET v3.cve_id = "CVE-2023-50164",
+        v3.cvss_score = 9.8,
+        v3.cisa_kev = true
+    MERGE (a3)-[:HAS_EVENT]->(e3)
+    MERGE (e3)-[:OCCURRED_ON]->(h3)
+    MERGE (h3)-[:RUNS]->(s3)
+    MERGE (s3)-[:AFFECTED_BY]->(v3)
+    """)
+
+    alert = queries.get_alert_by_id("alert-sec-003", graph_name=ABLATION_GRAPH_NAME)
+    context = queries.get_alert_context("alert-sec-003", graph_name=ABLATION_GRAPH_NAME)
+    attack_paths = queries.get_attack_paths("alert-sec-003", graph_name=ABLATION_GRAPH_NAME)
+    asset_exposures = queries.get_asset_exposure("alert-sec-003", graph_name=ABLATION_GRAPH_NAME)
+    related_alerts = queries.get_related_alerts("alert-sec-003", graph_name=ABLATION_GRAPH_NAME)
+
+    baseline_vulns = queries.get_vulnerability_exposure("alert-sec-003", graph_name=ABLATION_GRAPH_NAME)
+    assert len(baseline_vulns) == 1
+    assert baseline_vulns[0]["cve_id"] == "CVE-2023-50164"
+
+    baseline_assessment = assessment_engine.assess_investigation(
+        alert.model_dump(), context, attack_paths, asset_exposures, baseline_vulns, related_alerts
+    )
+    assert baseline_assessment.classification == CompromiseClassification.SUSPICIOUS
+    assert baseline_assessment.remediation_priority == RemediationPriority.HIGH
+    assert baseline_assessment.raw_score >= 0.15
+    assert "CVE-2023-50164" in baseline_assessment.supporting_evidence_ids
+
+    # Ablate [:AFFECTED_BY] relationship from FalkorDB
+    ablation_graph.query(
+        "MATCH (s:Software {id: 'sw-apache-struts'})-[r:AFFECTED_BY]->(v:Vulnerability {id: 'cve-2023-50164'}) DELETE r"
+    )
+
+    ablated_vulns = queries.get_vulnerability_exposure("alert-sec-003", graph_name=ABLATION_GRAPH_NAME)
+    assert len(ablated_vulns) == 0
+
+    ablated_assessment = assessment_engine.assess_investigation(
+        alert.model_dump(), context, attack_paths, asset_exposures, ablated_vulns, related_alerts
+    )
+    # Classification and priority drop because vulnerability link is broken in FalkorDB
+    assert ablated_assessment.classification == CompromiseClassification.INSUFFICIENT_EVIDENCE
+    assert ablated_assessment.remediation_priority == RemediationPriority.LOW
+    assert ablated_assessment.raw_score <= 0.05
+    assert ablated_assessment.raw_score < baseline_assessment.raw_score
+    assert "CVE-2023-50164" not in ablated_assessment.supporting_evidence_ids
+
+
 def test_ablation_cleanup_preserves_practice_graphs():
     """
     Ensure the ablation test does not alter threatpath_dev or social graphs.
@@ -153,3 +258,4 @@ def test_ablation_cleanup_preserves_practice_graphs():
     assert "threatpath_dev" in graphs
     assert "social" in graphs
     assert ABLATION_GRAPH_NAME not in graphs
+

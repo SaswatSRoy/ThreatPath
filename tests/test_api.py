@@ -112,3 +112,106 @@ def test_investigation_and_approval_workflow():
     ver_resp = client.get(f"/api/actions/{action_id}/verify")
     assert ver_resp.status_code == 200
     assert ver_resp.json()["status"] == "VERIFIED"
+
+
+def test_evidence_subgraph_excludes_investigation_and_response_nodes():
+    """
+    Regression Test for Issue 3:
+    Historical Investigation and ResponseAction nodes from prior runs must be preserved
+    in FalkorDB provenance, but MUST NOT be presented in the evidence subgraph.
+    """
+    # Run investigation multiple times to generate historical nodes
+    for _ in range(3):
+        resp = client.post(
+            "/api/investigations",
+            json={"alert_id": "alert-sec-001", "investigation_prompt": "Historical pollution check"}
+        )
+        assert resp.status_code == 200
+        inv = resp.json()
+
+        # Check evidence subgraph nodes
+        categories = {node["category"] for node in inv["graph"]["nodes"]}
+        assert "Investigation" not in categories, "Investigation nodes leaked into attack evidence subgraph!"
+        assert "ResponseAction" not in categories, "ResponseAction nodes leaked into attack evidence subgraph!"
+
+        # Check evidence subgraph edges
+        relations = {edge["relation"] for edge in inv["graph"]["edges"]}
+        assert "INVESTIGATES" not in relations
+        assert "TRIGGERED_ACTION" not in relations
+
+        # Verify only valid domain entities are present
+        allowed_categories = {
+            "Alert", "Event", "Host", "Identity", "Process",
+            "Indicator", "Technique", "Asset", "Software", "Vulnerability"
+        }
+        for node in inv["graph"]["nodes"]:
+            assert node["category"] in allowed_categories
+
+
+def test_all_evidence_nodes_and_edges_exist_in_falkordb():
+    """
+    Regression Test for Issue 6:
+    Every displayed node and edge in the investigation graph must correspond to actual FalkorDB data.
+    """
+    from backend.database import db_manager
+
+    resp = client.post(
+        "/api/investigations",
+        json={"alert_id": "alert-sec-001", "investigation_prompt": "Grounding verification"}
+    )
+    assert resp.status_code == 200
+    graph_data = resp.json()["graph"]
+
+    assert len(graph_data["nodes"]) > 0
+    assert len(graph_data["edges"]) > 0
+
+    # Query FalkorDB to verify each node ID exists in threatpath_dev
+    for node in graph_data["nodes"]:
+        node_id = node["id"]
+        q = db_manager.execute_query(
+            "MATCH (n) WHERE n.id = $id RETURN count(n)",
+            {"id": node_id}
+        )
+        assert q.result_set[0][0] >= 1, f"Node {node_id} claimed in graph but not found in FalkorDB!"
+
+
+def test_scenario_c_api_execution_and_verification_is_escalation_not_containment():
+    """
+    Regression Test for Issue 2 & 6:
+    Scenario C unpatched vulnerability investigation:
+    1. Proposes SIMULATE_ESCALATE_INCIDENT.
+    2. Execution and verification must confirm ticketing, NOT host isolation/containment.
+    """
+    inv_resp = client.post(
+        "/api/investigations",
+        json={"alert_id": "alert-sec-003", "investigation_prompt": "Investigate unpatched CVE"}
+    )
+    assert inv_resp.status_code == 200
+    inv = inv_resp.json()
+
+    action = inv["recommended_action"]
+    assert action is not None
+    assert action["action_type"] == "SIMULATE_ESCALATE_INCIDENT"
+    action_id = action["id"]
+
+    # Escalation is pre-approved under ALLOW policy
+    if action["status"] == "WAITING_FOR_APPROVAL":
+        appr_resp = client.post(
+            f"/api/actions/{action_id}/approve",
+            json={"approver": "SOC Lead", "comment": "Escalate to tier-3 response"}
+        )
+        assert appr_resp.status_code == 200
+    else:
+        assert action["status"] == "APPROVED"
+
+    # Execute
+    exec_resp = client.post(f"/api/actions/{action_id}/execute")
+    assert exec_resp.status_code == 200
+    details = exec_resp.json()["verification_details"].lower()
+
+    # Must NOT claim host isolation or containment
+    assert "ticket" in details or "ticketing" in details
+    assert "containment" not in details
+    assert "isolated" not in details
+    assert "vlan" not in details
+

@@ -177,10 +177,30 @@ class ThreatAssessmentEngine:
                 "child processes or network beacons. Presence of vulnerability does NOT establish exploitation."
             )
         elif classification == CompromiseClassification.INSUFFICIENT_EVIDENCE:
-            uncertainty_explanation = (
-                "Single anomalous authentication event observed without corroborating child processes, outbound connections, "
-                "or lateral traversal. Graph traversal finds no multi-hop evidence of compromise."
-            )
+            event_obj = context.get("event", {})
+            event_desc = event_obj.get("description") or alert.get("title", "event")
+            action_status = event_obj.get("action_status", "").upper()
+            event_type = event_obj.get("event_type", "").lower()
+            alert_type = alert.get("alert_type", "").lower()
+
+            if action_status == "BLOCKED" or "failed" in event_type or "burst" in alert_type:
+                uncertainty_explanation = (
+                    f"Authentication failures were blocked by system security controls ({event_desc}). "
+                    "FalkorDB traversal confirms zero active sessions, child processes, or lateral movement paths. "
+                    "External network indicators in database are disconnected and not correlated."
+                )
+                missing_evidence.append("Zero successful logon sessions established; all connection attempts were blocked.")
+            elif action_status == "SUCCESS":
+                uncertainty_explanation = (
+                    f"Single anomalous authentication succeeded with valid credentials ({event_desc}), "
+                    "but FalkorDB traversal reveals zero downstream process executions, external connections, or asset reachability paths. "
+                    "Conclusive proof of hostile control is absent."
+                )
+            else:
+                uncertainty_explanation = (
+                    f"Observed activity ({event_desc}) lacks corroborating multi-hop graph evidence. "
+                    "FalkorDB traversal confirms zero child processes, outbound C2 beaconing, or critical asset reachability."
+                )
         else:
             uncertainty_explanation = (
                 "Activity exhibits anomalous characteristics requiring analyst review, but lacks conclusive proof of hostile control."

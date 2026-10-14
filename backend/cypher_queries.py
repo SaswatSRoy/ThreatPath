@@ -215,16 +215,50 @@ class ThreatPathGraphQueries:
 
     def get_full_investigation_graph(self, alert_id: str, graph_name: Optional[str] = None) -> GraphData:
         """
-        Collect bounded subgraph paths centered on the alert up to 4 hops.
+        Collect bounded attack evidence subgraph paths centered on the alert up to 4 hops.
+        Filters out historical Investigation and ResponseAction provenance nodes so they do not
+        pollute the current incident evidence topology.
         """
         query = """
         MATCH p = (a:Alert)-[*1..4]-(target)
         WHERE a.id = $alert_id
+          AND NOT any(n IN nodes(p) WHERE n:Investigation OR n:ResponseAction)
         RETURN p
-        LIMIT 30
+        LIMIT 40
         """
         res = self.db.execute_query(query, {"alert_id": alert_id}, graph_name=graph_name)
         return self.db.normalize_graph_result(res.result_set)
+
+    def get_investigation_provenance(self, alert_id: str, graph_name: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        Retrieve historical investigation provenance and response actions for an alert.
+        Preserves provenance in FalkorDB separately from the attack evidence topology.
+        """
+        query = """
+        MATCH (inv:Investigation)-[:INVESTIGATES]->(a:Alert)
+        WHERE a.id = $alert_id
+        OPTIONAL MATCH (inv)-[:RECOMMENDED_ACTION]->(ra:ResponseAction)
+        RETURN inv.id AS inv_id, inv.classification AS classification, inv.priority AS priority,
+               inv.raw_score AS raw_score, inv.started_at AS started_at, inv.completed_at AS completed_at,
+               ra.id AS action_id, ra.action_type AS action_type, ra.status AS action_status
+        ORDER BY inv.completed_at DESC
+        LIMIT 10
+        """
+        res = self.db.execute_query(query, {"alert_id": alert_id}, graph_name=graph_name)
+        provenance = []
+        for r in res.result_set:
+            provenance.append({
+                "investigation_id": r[0],
+                "classification": r[1],
+                "priority": r[2],
+                "raw_score": r[3],
+                "started_at": r[4],
+                "completed_at": r[5],
+                "action_id": r[6],
+                "action_type": r[7],
+                "action_status": r[8]
+            })
+        return provenance
 
     def persist_investigation(
         self,
