@@ -21,12 +21,14 @@ REQUIRED_ALERTS = [
 ]
 
 
-def validate_seeded_graph(graph_name: str) -> bool:
+def validate_seeded_graph(graph_name: str = "threatpath_demo", graph_obj=None) -> bool:
     """
-    Validate that all required synthetic entities and relationships exist in the target graph.
+    Validate that all required synthetic entities and relationships exist in the target graph,
+    including canonical MAPS_TO technique connections and alert-to-event topology.
+    Accepts an optional graph_obj for isolated unit testing.
     """
     logger.info(f"Validating seeded topology on graph '{graph_name}'...")
-    g = db_manager.get_graph(graph_name)
+    g = graph_obj if graph_obj is not None else db_manager.get_graph(graph_name)
 
     # 1. Verify alerts
     alert_res = g.query("MATCH (a:Alert) RETURN a.id, a.title")
@@ -39,16 +41,40 @@ def validate_seeded_graph(graph_name: str) -> bool:
             return False
         logger.info(f"  ✓ {req_id}: {seeded_alerts[req_id]}")
 
-    # 2. Verify key relationship types
+    # 2. Verify key relationship types using canonical MAPS_TO
     rel_res = g.query("MATCH ()-[r]->() RETURN DISTINCT type(r) AS rel_type")
     rel_types = {r[0] for r in rel_res.result_set}
-    required_rels = {"HAS_EVENT", "OCCURRED_ON", "INVOLVES_IDENTITY", "HAS_TECHNIQUE"}
+    required_rels = {"HAS_EVENT", "OCCURRED_ON", "INVOLVES_IDENTITY", "MAPS_TO"}
     missing_rels = required_rels - rel_types
     if missing_rels:
         logger.error(f"Validation FAILED: Missing relationship types: {missing_rels}")
         return False
 
-    # 3. Verify total node and edge counts
+    # 3. Verify semantic connectivity: (Event)-[:MAPS_TO]->(Technique)
+    technique_conn_res = g.query(
+        "MATCH (e:Event)-[r:MAPS_TO]->(t:Technique) RETURN count(r) AS cnt"
+    )
+    technique_conns = technique_conn_res.result_set[0][0] if technique_conn_res.result_set else 0
+    if technique_conns == 0:
+        logger.error("Validation FAILED: No (Event)-[:MAPS_TO]->(Technique) relationships found in expected direction.")
+        return False
+    logger.info(f"  ✓ Validated {technique_conns} semantic (Event)-[:MAPS_TO]->(Technique) connections.")
+
+    # 4. Verify semantic connectivity: (Alert)-[:HAS_EVENT]->(Event) for seeded scenarios
+    alert_event_res = g.query(
+        "MATCH (a:Alert)-[r:HAS_EVENT]->(e:Event) RETURN count(DISTINCT a.id) AS alert_cnt, count(r) AS event_cnt"
+    )
+    if alert_event_res.result_set:
+        connected_alerts = int(alert_event_res.result_set[0][0])
+        event_conns = int(alert_event_res.result_set[0][1])
+        if connected_alerts < len(REQUIRED_ALERTS):
+            logger.error(
+                f"Validation FAILED: Only {connected_alerts}/{len(REQUIRED_ALERTS)} alerts have connected events."
+            )
+            return False
+        logger.info(f"  ✓ Validated {event_conns} (Alert)-[:HAS_EVENT]->(Event) relationships across {connected_alerts} alerts.")
+
+    # 5. Verify total node and edge counts
     node_cnt = g.query("MATCH (n) RETURN count(n)").result_set[0][0]
     edge_cnt = g.query("MATCH ()-[r]->() RETURN count(r)").result_set[0][0]
 

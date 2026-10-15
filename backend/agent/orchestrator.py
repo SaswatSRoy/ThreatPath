@@ -51,7 +51,7 @@ class InvestigationOrchestrator:
         logger.info(f"Starting investigation '{investigation_id}' for alert '{alert_id}' on graph '{target_graph}'")
 
         # 1. Resolve Alert
-        alert_summary = self.queries.get_alert_by_id(alert_id, graph_name=target_graph)
+        alert_summary = self.queries.get_alert_by_id(alert_id, graph_name=target_graph, session_id=session_id)
         if not alert_summary:
             raise ValueError(f"Alert with ID '{alert_id}' not found in graph '{target_graph}'.")
 

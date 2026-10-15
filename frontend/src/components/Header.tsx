@@ -1,12 +1,13 @@
 import React from 'react';
-import { Shield, Database, Cpu, Lock } from 'lucide-react';
+import { Shield, Database, Cpu, Lock, FlaskConical } from 'lucide-react';
 import type { SystemHealth } from '../types';
 
 interface HeaderProps {
   health: SystemHealth | null;
+  onOpenScenarioLab?: () => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({ health }) => {
+export const Header: React.FC<HeaderProps> = ({ health, onOpenScenarioLab }) => {
   return (
     <header style={{
       background: 'rgba(15, 23, 42, 0.85)',
@@ -113,6 +114,31 @@ export const Header: React.FC<HeaderProps> = ({ health }) => {
           <Lock size={12} />
           <span>Simulated Fleet Safe</span>
         </div>
+
+        {onOpenScenarioLab && (
+          <button
+            onClick={onOpenScenarioLab}
+            id="btn-open-scenario-lab"
+            style={{
+              background: 'linear-gradient(135deg, rgba(2, 132, 199, 0.25), rgba(99, 102, 241, 0.25))',
+              border: '1px solid rgba(56, 189, 248, 0.5)',
+              borderRadius: '6px',
+              padding: '5px 12px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              fontSize: '11px',
+              color: '#38bdf8',
+              fontWeight: 700,
+              cursor: 'pointer',
+              boxShadow: '0 0 10px rgba(56, 189, 248, 0.2)'
+            }}
+            title="Open Custom Scenario Lab to design, validate, and test custom threat topologies"
+          >
+            <FlaskConical size={13} color="#38bdf8" />
+            <span>Scenario Lab</span>
+          </button>
+        )}
       </div>
     </header>
   );

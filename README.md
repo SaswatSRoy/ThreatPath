@@ -4,7 +4,7 @@
 [![GitHub Repository](https://img.shields.io/badge/GitHub-SaswatSRoy%2FThreatPath-181717?style=for-the-badge&logo=github)](https://github.com/SaswatSRoy/ThreatPath)
 [![Graph Hacks 2026](https://img.shields.io/badge/Graph_Hacks_2026-Track_01:_Agents_That_Act_on_Connected_Data-0284c7?style=for-the-badge)](https://graphhacks.devpost.com/)
 [![Database: FalkorDB](https://img.shields.io/badge/Database-FalkorDB_6.0.2-c084fc?style=for-the-badge&logo=redis)](https://docs.falkordb.com/)
-[![Tests: 38 Passed](https://img.shields.io/badge/Tests-38_Passed_(100%25)-10b981?style=for-the-badge)](tests/)
+[![Tests: 59 Passed](https://img.shields.io/badge/Tests-59_Passed_(100%25)-10b981?style=for-the-badge)](tests/)
 [![Docker: Multi--Stage_Production](https://img.shields.io/badge/Docker-Multi--Stage_Prod_Verified-38bdf8?style=for-the-badge&logo=docker)](Dockerfile)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue?style=for-the-badge)](LICENSE)
 
@@ -26,11 +26,12 @@
 - **Multi-Hop Evidence Traversal**: Automatically follows causal relationships from alerts through events, hosts, process executions, and external C2 indicators.
 - **Deterministic Heuristic Assessment**: Uses transparent, testable rules to classify compromise (`likely_compromise`, `suspicious`, `insufficient_evidence`) and prioritize remediation (`critical`, `high`, `medium`, `low`) independently of LLM hallucinations.
 - **Vulnerability vs. Exploitation Distinction**: Strictly distinguishes between vulnerable software exposure (e.g. Apache Struts CVE-2023-50164 / CISA KEV) and verified compromise.
+- **Custom Scenario Lab**: Built-in JSON scenario authoring, offline schema/domain validation, live Cytoscape graph preview, and session-isolated persistence allowing analysts to test synthetic scenarios beyond pre-seeded alerts.
 - **Human-in-the-Loop Approval Gate**: Consequential actions (e.g., isolating production jump boxes or disabling accounts) enforce strict human authorization before simulated execution.
 - **Simulated Fleet Verification**: Simulates containment actions against a verified sandbox fleet and validates resulting state telemetry before confirming success.
 - **Official Model Context Protocol (MCP) Server**: Exposes 8 domain-specific investigation tools via the official Python MCP SDK (`mcp 2.x`).
 - **Interactive Cytoscape.js Workspace**: Real-time visual graph representation with node property inspection, layout switching, and responsive telemetry panels.
-- **Complete Test Suite & Provenance Persistence**: 38 automated unit, integration, and ablation tests passing (100%) against live FalkorDB queries.
+- **Complete Test Suite & Provenance Persistence**: 59 automated unit, integration, ablation, and scenario validation tests passing (100%) against live FalkorDB queries.
 
 ---
 
@@ -172,7 +173,109 @@ ThreatPath implements a genuine MCP server (`backend/agent/mcp_server.py`) using
 
 ---
 
-## 9. Quickstart & Setup Instructions
+## 9. Custom Scenario Lab & Versioned Schema
+
+ThreatPath provides a **Custom Scenario Lab** enabling analysts to compose, validate, preview, save, and investigate synthetic cybersecurity scenarios beyond the four pre-seeded alerts.
+
+### 9.1 Primary Workflow
+1. **Open Custom Scenario Lab**: Click the **"Scenario Lab"** button in the navigation header.
+2. **Author or Edit JSON**: Use the built-in JSON editor or click **"Load Template"** to populate the canonical endpoint scenario.
+3. **Validate**: Click **"Validate Scenario"**. The offline validator verifies schema structure, ID uniqueness, allowed labels, and domain endpoint constraints, surfacing actionable errors and warnings.
+4. **Preview Graph**: Valid scenarios generate an interactive Cytoscape.js graph preview showing proposed node categories and directed edges before touching the database.
+5. **Save Scenario**: Click **"Save Scenario"**. The backend idempotently persists the nodes and relationships into FalkorDB, scoped to your session ID (`X-Session-ID`).
+6. **Investigate**: Open the saved scenario directly in the ThreatPath workspace to execute multi-hop evidence traversal, deterministic assessment, and simulated response recommendations.
+
+### 9.2 Versioned Scenario Schema (`1.0`)
+
+Custom scenarios must adhere to schema version `1.0`:
+
+```json
+{
+  "schema_version": "1.0",
+  "name": "Suspicious PowerShell Execution",
+  "description": "A synthetic investigation involving unusual process execution on a workstation.",
+  "alert": {
+    "id": "alert-custom-001",
+    "title": "Suspicious PowerShell Execution",
+    "severity": "HIGH",
+    "status": "NEW",
+    "description": "A workstation generated an alert after executing an unusual PowerShell command.",
+    "source": "CUSTOM_SCENARIO"
+  },
+  "entities": [
+    {
+      "id": "event-custom-001",
+      "label": "Event",
+      "properties": {
+        "event_type": "PROCESS_EXECUTION",
+        "description": "Unusual PowerShell execution observed",
+        "timestamp": "2026-03-29T10:15:00Z"
+      }
+    },
+    {
+      "id": "host-custom-001",
+      "label": "Host",
+      "properties": {
+        "hostname": "workstation-17",
+        "environment": "endpoint"
+      }
+    },
+    {
+      "id": "process-custom-001",
+      "label": "Process",
+      "properties": {
+        "name": "powershell.exe",
+        "command_line": "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command Write-Host 'Synthetic Test'"
+      }
+    }
+  ],
+  "relationships": [
+    {
+      "from": "alert-custom-001",
+      "type": "HAS_EVENT",
+      "to": "event-custom-001"
+    },
+    {
+      "from": "event-custom-001",
+      "type": "OCCURRED_ON",
+      "to": "host-custom-001"
+    },
+    {
+      "from": "host-custom-001",
+      "type": "EXECUTED",
+      "to": "process-custom-001"
+    }
+  ]
+}
+```
+
+### 9.3 Canonical Allowed Labels & Relationship Constraints
+
+To prevent graph corruption and Cypher injection, labels and relationship types are enforced through strict server-side allowlists:
+
+- **Allowed Node Labels**: `Alert`, `Event`, `Host`, `Process`, `Indicator`, `Identity`, `Software`, `Vulnerability`, `Asset`, `Technique`.
+- **Allowed Relationship Types & Endpoint Constraints**:
+  - `(Alert)-[:HAS_EVENT]->(Event)`
+  - `(Event)-[:INVOLVES_IDENTITY]->(Identity)`
+  - `(Event)-[:OCCURRED_ON]->(Host)`
+  - `(Event)-[:INVOLVES_PROCESS]->(Process)`
+  - `(Host)-[:EXECUTED]->(Process)`
+  - `(Process)-[:CONNECTED_TO]->(Indicator)`
+  - `(Event)-[:MAPS_TO]->(Technique)`
+  - `(Host)-[:RUNS]->(Software)`
+  - `(Software)-[:AFFECTED_BY]->(Vulnerability)`
+  - `(Host)-[:CAN_ACCESS]->(Asset)`
+
+### 9.4 Session Scoping & Isolation
+
+- **Session Ownership**: Each custom scenario and its constituent graph entities are scoped to the client's `X-Session-ID`.
+- **Cross-Session Isolation**: Custom scenarios authored by Session A cannot be viewed, listed, or traversed by Session B.
+- **Global Demo Alerts**: Seeded demonstration alerts (`alert-sec-001` through `alert-sec-004`) have `session_id IS NULL` and remain globally available to all users.
+- **Security Boundary**: The client-generated `X-Session-ID` is an isolation mechanism for multi-user demonstration environments, not cryptographically verified authentication. It prevents concurrent evaluator collisions in demo deployments.
+
+---
+
+## 10. Quickstart & Setup Instructions
 
 ### Prerequisites
 - Linux / macOS
@@ -206,7 +309,7 @@ Default configuration connects to local FalkorDB at `127.0.0.1:6379` using dedic
 python3 -m backend.seed
 ```
 
-### Step 4: Run the Test Suite (Including Graph Ablation Test)
+### Step 4: Run the Test Suite (Including Graph Ablation & Validation Tests)
 ```bash
 pytest tests/ -v
 ```
@@ -224,7 +327,7 @@ Open **`http://localhost:5173`** in your browser.
 
 ---
 
-## 10. Production Multi-Stage Docker Build
+## 11. Production Multi-Stage Docker Build
 
 ThreatPath packages both the compiled React frontend and the FastAPI backend into a single self-contained, production-grade container image:
 
@@ -244,7 +347,7 @@ The unified container serves compiled React static assets directly from `/` and 
 
 ---
 
-## 11. Cloud Deployment (Railway Ready)
+## 12. Cloud Deployment (Railway Ready)
 
 ThreatPath is fully configured for deployment on Railway or any Docker-compatible PaaS platform:
 
@@ -262,42 +365,54 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for step-by-step Railway dashboard 
 
 ---
 
-## 12. REST API Endpoints
+## 13. REST API Endpoints
 
+### Core Alerts & Investigations
 - `GET /api/health` — Verifies FalkorDB connectivity and operational mode.
-- `GET /api/alerts` — Lists all registered security alerts in FalkorDB.
+- `GET /api/alerts` — Lists registered security alerts in FalkorDB (filtered by session).
 - `GET /api/alerts/{alert_id}` — Retrieves an individual alert.
 - `POST /api/investigations` — Triggers graph-native autonomous investigation.
 - `GET /api/investigations/{id}` — Retrieves investigation record (persisted across restarts).
 - `GET /api/investigations/{id}/evidence` — Retrieves structured evidence & Cytoscape graph.
+
+### Response Actions & Approval Gate
 - `POST /api/actions/{id}/approve` — Analyst approval gate.
 - `POST /api/actions/{id}/deny` — Analyst denial gate.
 - `POST /api/actions/{id}/execute` — Executes containment on simulated fleet.
 - `GET /api/actions/{id}/verify` — Verifies simulated endpoint telemetry.
 
+### Custom Scenario Lab
+- `POST /api/scenarios/validate` — Validates custom scenario schema and generates offline Cytoscape preview.
+- `POST /api/scenarios` — Validates and idempotently persists custom scenario scoped to `X-Session-ID`.
+- `GET /api/scenarios` — Lists custom scenarios belonging to caller's `X-Session-ID`.
+- `GET /api/scenarios/{id}` — Retrieves custom scenario by ID.
+- `GET /api/scenarios/template` — Returns canonical starter scenario template.
+
 ---
 
-## 13. Security & Safety Boundaries
+## 14. Security & Safety Boundaries
 
 - **Zero Production Risk**: All containment actions are strictly simulated. ThreatPath never isolates real endpoints, modifies real network controls, or executes arbitrary shell commands.
-- **Strict Parameterization**: All Cypher queries use parameterized inputs to prevent injection.
+- **Strict Parameterization & Allowlists**: All Cypher queries use parameterized inputs. Custom scenario ingestion verifies all node labels and relationship types against strict server-side allowlists, preventing query injection.
 - **Credential Protection**: Database passwords and API keys are never exposed in tool arguments or logged.
 - **Isolated Private Database**: The production database has no public domain or TCP proxy.
 - **Approval Gate**: Consequential actions (host isolation, account disablement) strictly require manual approval before execution.
+- **Session Scoping**: Custom scenarios and alerts are scoped to `X-Session-ID`, providing multi-user isolation during demonstration evaluations.
 
 ---
 
-## 14. Known Limitations & Engineering Notes
+## 15. Known Limitations & Engineering Notes
 
 1. **Deterministic Rule Engine (No Black-Box Scoring)**: ThreatPath's assessment engine operates on explicit, testable heuristic factor weights (ranging from 0.05 to 0.95). Scores provide transparent, explainable triage ranking rather than calibrated Bayesian probabilities.
 2. **Simulated Response Fleet**: Consequential actions (`SIMULATE_ISOLATE_HOST`, `SIMULATE_DISABLE_ACCOUNT`, `SIMULATE_ESCALATE_INCIDENT`) modify a sandboxed, state-persisted fleet simulation in FalkorDB and local memory. ThreatPath never executes destructive commands or modifies real cloud/EDR infrastructure.
 3. **LLM Provider Default**: The production deployment operates by default with `LLM_PROVIDER=mock`, utilizing deterministic rule-based generation for incident narratives without external API key dependencies. External LLM providers (`openai`, `anthropic`, `gemini`) are supported optionally.
-4. **Remote Seeder Validator Assertion**: The `scripts/seed_remote.py` utility successfully inserts all 24 nodes, 20 relationships, and 4 scenario alerts into `threatpath_demo`. However, its post-seed validation function checks for relationship label `HAS_TECHNIQUE` instead of the canonical `MAPS_TO` defined across the graph model and Cypher queries. While all four alerts and graph queries are fully active and verified on the live deployment, updating this validation assertion in `scripts/seed_remote.py` is documented as a known minor maintenance item for the next release.
+4. **Remote Seeding Validation Mismatch Resolved**: Previous builds checked for a legacy relationship label `HAS_TECHNIQUE` during post-seed verification. `scripts/seed_remote.py` now validates the canonical `MAPS_TO` relationship and verifies semantic `(Event)-[:MAPS_TO]->(Technique)` connectivity and alert-event linkage, covered by 6 automated regression tests in `tests/test_seed_validation.py`.
+5. **Session Isolation Boundary**: Client-supplied `X-Session-ID` headers partition custom scenarios and simulated fleet states for concurrent evaluation sessions. It is designed for demonstration multi-tenancy and is not a cryptographically verified authentication system.
 
 ---
 
-## 15. AI-Assisted Development Disclosure
+## 16. AI-Assisted Development Disclosure
 
 In accordance with Graph Hacks 2026 rules:
 - ThreatPath was designed and engineered with assistance from **Google Antigravity**.
-- All FalkorDB Cypher queries, graph schemas, deterministic scoring rules, approval gates, multi-stage Docker builds, and simulation verifiers were designed for this project, audited against live FalkorDB containers, and validated through 38 automated unit, integration, and ablation tests.
+- All FalkorDB Cypher queries, graph schemas, deterministic scoring rules, approval gates, multi-stage Docker builds, scenario validators, and simulation verifiers were designed for this project, audited against live FalkorDB containers, and validated through 59 automated unit, integration, and ablation tests.

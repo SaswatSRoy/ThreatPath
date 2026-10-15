@@ -13,21 +13,38 @@ class ThreatPathGraphQueries:
     def __init__(self, db=None):
         self.db = db or db_manager
 
-    def get_all_alerts(self, graph_name: Optional[str] = None) -> List[AlertSummary]:
+    def get_all_alerts(self, graph_name: Optional[str] = None, session_id: Optional[str] = None) -> List[AlertSummary]:
         """
         Retrieve all alerts currently registered in the graph.
+        If session_id is provided, includes global alerts plus custom alerts created by that session.
+        If session_id is None, returns only global alerts.
         """
-        query = """
-        MATCH (a:Alert)
-        OPTIONAL MATCH (a)-[:HAS_EVENT]->(e:Event)-[:OCCURRED_ON]->(h:Host)
-        OPTIONAL MATCH (e)-[:INVOLVES_IDENTITY]->(i:Identity)
-        RETURN a.id AS id, a.title AS title, a.description AS description,
-               a.severity AS severity, a.status AS status, a.timestamp AS timestamp,
-               a.source AS source, a.alert_type AS alert_type,
-               h.hostname AS target_host, i.username AS target_identity
-        ORDER BY a.timestamp DESC
-        """
-        res = self.db.execute_query(query, graph_name=graph_name)
+        if session_id:
+            query = """
+            MATCH (a:Alert)
+            WHERE (a.session_id IS NULL OR a.session_id = $session_id)
+            OPTIONAL MATCH (a)-[:HAS_EVENT]->(e:Event)-[:OCCURRED_ON]->(h:Host)
+            OPTIONAL MATCH (e)-[:INVOLVES_IDENTITY]->(i:Identity)
+            RETURN a.id AS id, a.title AS title, a.description AS description,
+                   a.severity AS severity, a.status AS status, a.timestamp AS timestamp,
+                   a.source AS source, a.alert_type AS alert_type,
+                   h.hostname AS target_host, i.username AS target_identity
+            ORDER BY a.timestamp DESC
+            """
+            res = self.db.execute_query(query, {"session_id": session_id}, graph_name=graph_name)
+        else:
+            query = """
+            MATCH (a:Alert)
+            WHERE a.session_id IS NULL
+            OPTIONAL MATCH (a)-[:HAS_EVENT]->(e:Event)-[:OCCURRED_ON]->(h:Host)
+            OPTIONAL MATCH (e)-[:INVOLVES_IDENTITY]->(i:Identity)
+            RETURN a.id AS id, a.title AS title, a.description AS description,
+                   a.severity AS severity, a.status AS status, a.timestamp AS timestamp,
+                   a.source AS source, a.alert_type AS alert_type,
+                   h.hostname AS target_host, i.username AS target_identity
+            ORDER BY a.timestamp DESC
+            """
+            res = self.db.execute_query(query, graph_name=graph_name)
         alerts = []
         for r in res.result_set:
             alerts.append(AlertSummary(
@@ -44,21 +61,40 @@ class ThreatPathGraphQueries:
             ))
         return alerts
 
-    def get_alert_by_id(self, alert_id: str, graph_name: Optional[str] = None) -> Optional[AlertSummary]:
+    def get_alert_by_id(
+        self,
+        alert_id: str,
+        graph_name: Optional[str] = None,
+        session_id: Optional[str] = None
+    ) -> Optional[AlertSummary]:
         """
         Retrieve an individual alert by ID.
+        Enforces session scoping if alert is a custom session-scoped alert.
         """
-        query = """
-        MATCH (a:Alert)
-        WHERE a.id = $alert_id
-        OPTIONAL MATCH (a)-[:HAS_EVENT]->(e:Event)-[:OCCURRED_ON]->(h:Host)
-        OPTIONAL MATCH (e)-[:INVOLVES_IDENTITY]->(i:Identity)
-        RETURN a.id AS id, a.title AS title, a.description AS description,
-               a.severity AS severity, a.status AS status, a.timestamp AS timestamp,
-               a.source AS source, a.alert_type AS alert_type,
-               h.hostname AS target_host, i.username AS target_identity
-        """
-        res = self.db.execute_query(query, {"alert_id": alert_id}, graph_name=graph_name)
+        if session_id:
+            query = """
+            MATCH (a:Alert)
+            WHERE a.id = $alert_id AND (a.session_id IS NULL OR a.session_id = $session_id)
+            OPTIONAL MATCH (a)-[:HAS_EVENT]->(e:Event)-[:OCCURRED_ON]->(h:Host)
+            OPTIONAL MATCH (e)-[:INVOLVES_IDENTITY]->(i:Identity)
+            RETURN a.id AS id, a.title AS title, a.description AS description,
+                   a.severity AS severity, a.status AS status, a.timestamp AS timestamp,
+                   a.source AS source, a.alert_type AS alert_type,
+                   h.hostname AS target_host, i.username AS target_identity
+            """
+            res = self.db.execute_query(query, {"alert_id": alert_id, "session_id": session_id}, graph_name=graph_name)
+        else:
+            query = """
+            MATCH (a:Alert)
+            WHERE a.id = $alert_id
+            OPTIONAL MATCH (a)-[:HAS_EVENT]->(e:Event)-[:OCCURRED_ON]->(h:Host)
+            OPTIONAL MATCH (e)-[:INVOLVES_IDENTITY]->(i:Identity)
+            RETURN a.id AS id, a.title AS title, a.description AS description,
+                   a.severity AS severity, a.status AS status, a.timestamp AS timestamp,
+                   a.source AS source, a.alert_type AS alert_type,
+                   h.hostname AS target_host, i.username AS target_identity
+            """
+            res = self.db.execute_query(query, {"alert_id": alert_id}, graph_name=graph_name)
         if not res.result_set:
             return None
         r = res.result_set[0]
@@ -222,7 +258,7 @@ class ThreatPathGraphQueries:
         query = """
         MATCH p = (a:Alert)-[*1..4]-(target)
         WHERE a.id = $alert_id
-          AND NOT any(n IN nodes(p) WHERE n:Investigation OR n:ResponseAction OR n:SimulatedState)
+          AND NOT any(n IN nodes(p) WHERE n:Investigation OR n:ResponseAction OR n:SimulatedState OR n:CustomScenario)
         RETURN p
         LIMIT 40
         """

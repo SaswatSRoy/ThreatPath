@@ -6,6 +6,7 @@ import { NodeInspectorModal } from './components/NodeInspectorModal';
 import { RelationshipInspectorModal } from './components/RelationshipInspectorModal';
 import { FindingsPanel } from './components/FindingsPanel';
 import { ResponseActionPanel } from './components/ResponseActionPanel';
+import { ScenarioLabModal } from './components/ScenarioLabModal';
 import type { AlertSummary, InvestigationRecord, GraphNode, GraphEdge, SystemHealth } from './types';
 import { 
   Sparkles, 
@@ -30,9 +31,23 @@ export function App() {
   const [loadingAlerts, setLoadingAlerts] = useState(false);
   const [investigating, setInvestigating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isScenarioLabOpen, setIsScenarioLabOpen] = useState(false);
 
   // Mobile / Tablet Tab Navigation (< 1024px)
   const [mobileTab, setMobileTab] = useState<'queue' | 'graph' | 'findings'>('graph');
+
+  const getOrCreateSessionId = useCallback((): string => {
+    try {
+      let sid = sessionStorage.getItem('threatpath_session_id');
+      if (!sid) {
+        sid = 'session-' + Math.random().toString(36).substring(2, 10);
+        sessionStorage.setItem('threatpath_session_id', sid);
+      }
+      return sid;
+    } catch {
+      return 'demo_default';
+    }
+  }, []);
 
   const fetchHealth = useCallback(async () => {
     try {
@@ -49,7 +64,10 @@ export function App() {
   const fetchAlerts = useCallback(async () => {
     setLoadingAlerts(true);
     try {
-      const res = await fetch('/api/alerts');
+      const sid = getOrCreateSessionId();
+      const res = await fetch('/api/alerts', {
+        headers: { 'X-Session-ID': sid }
+      });
       if (res.ok) {
         const data: AlertSummary[] = await res.json();
         setAlerts(data);
@@ -70,7 +88,7 @@ export function App() {
     } finally {
       setLoadingAlerts(false);
     }
-  }, []);
+  }, [getOrCreateSessionId]);
 
   useEffect(() => {
     fetchHealth();
@@ -91,16 +109,50 @@ export function App() {
     }
   };
 
-  const getOrCreateSessionId = (): string => {
+  const handleScenarioSelected = async (alertId: string) => {
     try {
-      let sid = sessionStorage.getItem('threatpath_session_id');
-      if (!sid) {
-        sid = 'session-' + Math.random().toString(36).substring(2, 10);
-        sessionStorage.setItem('threatpath_session_id', sid);
+      setInvestigating(true);
+      setError(null);
+      const sid = getOrCreateSessionId();
+      const alertsRes = await fetch('/api/alerts', {
+        headers: { 'X-Session-ID': sid }
+      });
+      if (alertsRes.ok) {
+        const alertsData: AlertSummary[] = await alertsRes.json();
+        setAlerts(alertsData);
+        const target = alertsData.find(a => a.id === alertId);
+        if (target) {
+          setSelectedAlert(target);
+          const defaultP = `Investigate custom alert ${alertId} and trace connected evidence.`;
+          setPrompt(defaultP);
+
+          // Run investigation immediately
+          const invRes = await fetch('/api/investigations', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Session-ID': sid
+            },
+            body: JSON.stringify({
+              alert_id: alertId,
+              investigation_prompt: defaultP
+            })
+          });
+          if (invRes.ok) {
+            const invRecord: InvestigationRecord = await invRes.json();
+            setInvestigation(invRecord);
+            if (invRecord.assessment.supporting_evidence_ids.length > 0) {
+              setHighlightedEntityIds(invRecord.assessment.supporting_evidence_ids);
+            } else {
+              setHighlightedEntityIds([]);
+            }
+          }
+        }
       }
-      return sid;
-    } catch {
-      return 'demo_default';
+    } catch (e: any) {
+      setError(e.message || 'Failed to auto-investigate custom scenario');
+    } finally {
+      setInvestigating(false);
     }
   };
 
@@ -231,7 +283,10 @@ export function App() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', background: 'var(--bg-primary)' }}>
-      <Header health={health} />
+      <Header 
+        health={health} 
+        onOpenScenarioLab={() => setIsScenarioLabOpen(true)} 
+      />
 
       {/* Investigation Progress Stepper */}
       <div style={{
@@ -494,6 +549,14 @@ export function App() {
           />
         </div>
       </main>
+
+      <ScenarioLabModal
+        isOpen={isScenarioLabOpen}
+        onClose={() => setIsScenarioLabOpen(false)}
+        sessionId={getOrCreateSessionId()}
+        onScenarioSelected={handleScenarioSelected}
+        onScenarioSaved={fetchAlerts}
+      />
     </div>
   );
 }

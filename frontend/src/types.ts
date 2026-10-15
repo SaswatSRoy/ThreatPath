@@ -93,3 +93,33 @@ export interface SystemHealth {
   llm_mode: string;
   simulated_responses_enabled: boolean;
 }
+
+export interface ValidationErrorItem {
+  field: string;
+  message: string;
+  code: string;
+}
+
+export interface ScenarioValidationResponse {
+  valid: boolean;
+  errors: ValidationErrorItem[];
+  warnings: string[];
+  preview?: GraphData | null;
+}
+
+export interface ScenarioSummary {
+  id: string;
+  name: string;
+  description: string;
+  alert_id: string;
+  alert_title: string;
+  severity: string;
+  created_at: string;
+  node_count: number;
+  relationship_count: number;
+  session_id: string;
+}
+
+export interface ScenarioDetails extends ScenarioSummary {
+  payload: Record<string, any>;
+}

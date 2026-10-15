@@ -3,7 +3,7 @@ ThreatPath REST API Endpoints
 """
 import logging
 from typing import List, Dict, Any, Optional
-from fastapi import APIRouter, HTTPException, status, Header
+from fastapi import APIRouter, HTTPException, status, Header, Body
 from backend.config import settings
 from backend.database import db_manager
 from backend.cypher_queries import graph_queries
@@ -20,6 +20,14 @@ from backend.models import (
     Assessment,
     CompromiseClassification,
     RemediationPriority
+)
+from backend.scenarios.validator import ScenarioValidator
+from backend.scenarios.service import scenario_service
+from backend.scenarios.templates import CANONICAL_ENDPOINT_SCENARIO
+from backend.scenarios.schema import (
+    ScenarioValidationResponse,
+    ScenarioSummary,
+    ScenarioDetails
 )
 
 logger = logging.getLogger(__name__)
@@ -56,26 +64,100 @@ def get_health() -> Dict[str, Any]:
 
 
 @router.get("/alerts", response_model=List[AlertSummary])
-def list_alerts() -> List[AlertSummary]:
+def list_alerts(x_session_id: Optional[str] = Header(None, alias="X-Session-ID")) -> List[AlertSummary]:
     """
     Retrieve all security alerts available in the FalkorDB graph.
+    Includes global seeded alerts and session-scoped custom scenario alerts.
     """
     try:
-        return graph_queries.get_all_alerts()
+        return graph_queries.get_all_alerts(session_id=x_session_id)
     except Exception as e:
         logger.error(f"Failed to fetch alerts: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
 
 @router.get("/alerts/{alert_id}", response_model=AlertSummary)
-def get_alert(alert_id: str) -> AlertSummary:
+def get_alert(alert_id: str, x_session_id: Optional[str] = Header(None, alias="X-Session-ID")) -> AlertSummary:
     """
-    Retrieve specific alert by ID.
+    Retrieve specific alert by ID with session ownership enforcement.
     """
-    alert = graph_queries.get_alert_by_id(alert_id)
+    alert = graph_queries.get_alert_by_id(alert_id, session_id=x_session_id)
     if not alert:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Alert '{alert_id}' not found")
     return alert
+
+
+# =============================================================================
+# Custom Scenario Lab Endpoints
+# =============================================================================
+
+@router.post("/scenarios/validate", response_model=ScenarioValidationResponse)
+def validate_scenario(payload: Any = Body(...)) -> ScenarioValidationResponse:
+    """
+    Validate custom scenario JSON without database mutation.
+    Returns actionable structured errors, warnings, and an offline Cytoscape graph preview.
+    """
+    return ScenarioValidator.validate(payload)
+
+
+@router.post("/scenarios", response_model=ScenarioSummary, status_code=status.HTTP_201_CREATED)
+def create_scenario(
+    payload: Dict[str, Any],
+    x_session_id: Optional[str] = Header(None, alias="X-Session-ID")
+) -> ScenarioSummary:
+    """
+    Validate and idempotently persist a custom cybersecurity scenario into FalkorDB
+    scoped strictly to the caller's session.
+    """
+    sess = x_session_id or "demo_default"
+    try:
+        return scenario_service.save_scenario(payload, session_id=sess)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to save scenario: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+
+@router.get("/scenarios", response_model=List[ScenarioSummary])
+def list_scenarios(
+    x_session_id: Optional[str] = Header(None, alias="X-Session-ID")
+) -> List[ScenarioSummary]:
+    """
+    List custom scenarios belonging strictly to the caller's session.
+    """
+    sess = x_session_id or "demo_default"
+    try:
+        return scenario_service.list_scenarios(session_id=sess)
+    except Exception as e:
+        logger.error(f"Failed to list scenarios: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+
+@router.get("/scenarios/template")
+def get_scenario_template() -> Dict[str, Any]:
+    """
+    Return the canonical starter scenario JSON fixture.
+    """
+    return CANONICAL_ENDPOINT_SCENARIO
+
+
+@router.get("/scenarios/{scenario_id}", response_model=ScenarioDetails)
+def get_scenario_by_id(
+    scenario_id: str,
+    x_session_id: Optional[str] = Header(None, alias="X-Session-ID")
+) -> ScenarioDetails:
+    """
+    Retrieve specific custom scenario by ID for the caller's session.
+    """
+    sess = x_session_id or "demo_default"
+    scenario = scenario_service.get_scenario(scenario_id, session_id=sess)
+    if not scenario:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Scenario '{scenario_id}' not found for current session"
+        )
+    return scenario
 
 
 @router.post("/investigations", response_model=InvestigationRecord)

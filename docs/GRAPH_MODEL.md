@@ -118,3 +118,36 @@ CREATE INDEX FOR (ra:ResponseAction) ON (ra.id);
 (Indicator: ind-unrelated-scanner {value: "203.0.113.88"})  <-- [DISCONNECTED / ZERO GRAPH EDGES]
 ```
 *Outcome*: All SSH password spray attempts were blocked by host security controls (`action_status: BLOCKED`). FalkorDB graph traversal confirms zero active sessions, zero child processes, zero lateral movement, and zero critical asset reachability. The external malicious scanner indicator in the database is completely disconnected. Classified as `insufficient_evidence`, remediation priority `low`, proving that ThreatPath does not fabricate correlations between unlinked entities.
+
+---
+
+## 6. Custom Scenario Data Model & Session Scoping
+
+ThreatPath supports user-submitted custom scenarios via the **Custom Scenario Lab**.
+
+### Node Schema: `CustomScenario`
+| Property | Type | Description |
+| :--- | :--- | :--- |
+| `id` | `STRING` | Unique scenario identifier (`scenario-<alert_id>`). |
+| `name` | `STRING` | Human-readable scenario title. |
+| `description` | `STRING` | Detailed scenario description or hypothesis. |
+| `schema_version` | `STRING` | Supported scenario specification version (`1.0`). |
+| `session_id` | `STRING` | Session identifier (`X-Session-ID`) establishing data boundary. |
+| `created_at` | `STRING` | ISO 8601 creation timestamp. |
+| `alert_id` | `STRING` | Identifier of the scenario's constituent `Alert` node. |
+
+### Topology:
+```
+(CustomScenario: scenario-alert-custom-001) --> [:CONTAINS_ALERT] --> (Alert: alert-custom-001)
+                                                                           |
+                                                                           +--> [:HAS_EVENT] --> (Event: ...)
+```
+
+### Session Isolation Model:
+All custom scenario nodes (`CustomScenario`, `Alert`, and constituent entities/relationships) carry a `session_id` property. When a client provides `X-Session-ID: <session_uuid>`, queries filter:
+```cypher
+MATCH (a:Alert) WHERE (a.session_id IS NULL OR a.session_id = $session_id)
+```
+- **Seeded alerts** (`session_id IS NULL`): Globally accessible to all users for demonstration.
+- **Custom alerts** (`session_id = $session_id`): Accessible only to the session that authored them.
+
