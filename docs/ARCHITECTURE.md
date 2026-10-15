@@ -48,12 +48,16 @@ ThreatPath is implemented as a cohesive, high-performance modular monolith:
 |                      +-----------------------------------------+                        |
 +-------------------------------------------|---------------------------------------------+
                                             |
-                                            | falkordb-py client (tcp 127.0.0.1:6379)
+                                            | falkordb-py client
+                                            | Production: tcp falkordb-server.railway.internal:6379
+                                            | Local Dev:   tcp 127.0.0.1:6379
                                             v
 +-----------------------------------------------------------------------------------------+
 |                                  FALKORDB ENGINE                                        |
 |                                                                                         |
-|      Dedicated Database Graph: [ threatpath_dev ]                                       |
+|      Dedicated Database Graphs:                                                         |
+|        • [ threatpath_demo ] : Production demonstration graph on Railway                |
+|        • [ threatpath_dev  ] : Local development environment                            |
 |                                                                                         |
 |      (Alert) --> [:HAS_EVENT] --> (Event) --> [:OCCURRED_ON] --> (Host)                 |
 |                                     |                             |                     |
@@ -63,9 +67,12 @@ ThreatPath is implemented as a cohesive, high-performance modular monolith:
 |                                                                   v                     |
 |                                                              (Indicator)                |
 |                                                                                         |
-|      Preserved Practice Data: [ social ] (Untouched)                                    |
+|      Preserved Practice Data: [ social ] (Untouched on local container)                 |
 +-----------------------------------------------------------------------------------------+
 ```
+
+**Live Deployed Application:** [https://threatpath-production.up.railway.app](https://threatpath-production.up.railway.app)  
+**Source Repository:** [https://github.com/SaswatSRoy/ThreatPath](https://github.com/SaswatSRoy/ThreatPath)
 
 ---
 
@@ -103,3 +110,9 @@ ThreatPath is implemented as a cohesive, high-performance modular monolith:
 ### 3.6 Frontend Investigation Workspace (`frontend/`)
 - Built with React, Vite, TypeScript, and Cytoscape.js.
 - Cyber dark-mode aesthetics with real-time graph visualization, interactive node inspector, multi-hop proof path inspection, and one-click approval controls.
+
+### 3.7 Persistence Architecture & State Durability
+- **Investigation Provenance**: Completed investigations and recommended actions are persisted into FalkorDB via `cypher/provenance.cypher` as `(inv:Investigation)-[:INVESTIGATES]->(a:Alert)` and `(inv)-[:RECOMMENDED_ACTION]->(ra:ResponseAction)`. If the web container restarts or memory cache clears, past investigations reload reliably from FalkorDB.
+- **Evidence Subgraph Cleanliness**: Historical `Investigation` and `ResponseAction` nodes are preserved for provenance, but are strictly excluded from the active evidence topology displayed in the frontend graph canvas.
+- **Simulated Fleet Durability**: Defensive actions update simulated host telemetry (e.g. `network_state: isolated`). Simulation state is persisted in FalkorDB and synchronized to `/app/data/simulated_state.json`. On container restarts, simulated containment states survive intact.
+- **Multi-Judge Session Isolation**: HTTP endpoints support `X-Session-ID` headers to isolate in-memory simulation state across distinct user sessions, preventing judges from colliding during evaluations.

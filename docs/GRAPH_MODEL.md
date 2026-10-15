@@ -107,4 +107,14 @@ CREATE INDEX FOR (ra:ResponseAction) ON (ra.id);
                                                                                 +--> [:CAN_ACCESS] ----> (Asset: Payment Gateway [HIGH])
                                                                                 +--> [:EXECUTED] -----> (Process: java [Normal])
 ```
-*Outcome*: High remediation priority due to KEV vulnerability on accessible host, but classified as `suspicious` (exposure) rather than `likely_compromise` because no hostile child processes or beaconing exist.
+*Outcome*: High remediation priority due to KEV vulnerability on accessible host, but classified as `suspicious` (exposure) rather than `likely_compromise` because no hostile child processes or beaconing exist. Recommended response is `SIMULATE_ESCALATE_INCIDENT` (patch management ticket), strictly distinguishing exposure from active compromise.
+
+### Scenario D: Disconnected Entities & Blocked Attempts (`alert-sec-004`)
+```
+(Alert: alert-sec-004) --> [:HAS_EVENT] --> (Event: evt-401 [BLOCKED])
+                                               |
+                                               +--> [:OCCURRED_ON] --------> (Host: bastion-stage.corp.internal)
+
+(Indicator: ind-unrelated-scanner {value: "203.0.113.88"})  <-- [DISCONNECTED / ZERO GRAPH EDGES]
+```
+*Outcome*: All SSH password spray attempts were blocked by host security controls (`action_status: BLOCKED`). FalkorDB graph traversal confirms zero active sessions, zero child processes, zero lateral movement, and zero critical asset reachability. The external malicious scanner indicator in the database is completely disconnected. Classified as `insufficient_evidence`, remediation priority `low`, proving that ThreatPath does not fabricate correlations between unlinked entities.

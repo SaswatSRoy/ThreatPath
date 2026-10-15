@@ -2,7 +2,7 @@
 
 This document catalogs the parameterized Cypher queries utilized by ThreatPath to investigate security alerts in FalkorDB.
 
-All queries are executed against the dedicated graph `threatpath_dev` using parameterized arguments to prevent injection attacks and ensure optimal query plan caching.
+All queries are executed against the dedicated application graph (`threatpath_demo` on Railway production, `threatpath_dev` in local development) using parameterized arguments to prevent injection attacks and ensure optimal query plan caching. Practice graphs such as `social` remain isolated and untouched.
 
 ---
 

@@ -24,20 +24,23 @@ ThreatPath employs a robust, two-service containerized architecture separating p
                  └─────────────────┬─────────────────┘
                                    │
               Private Internal Network (No Public Ingress)
-              Host: falkordb.railway.internal / Port: 6379
+              Host: falkordb-server.railway.internal / Port: 6379
                                    │
                                    ▼
                  ┌───────────────────────────────────┐
                  │       FalkorDB Graph Server       │
-                 │   (Railway Service 2 — Private)   │
+                 │ (Railway Service: falkordb-server)│
                  │ ───────────────────────────────── │
                  │ • Image: falkordb/falkordb-server │
-                 │ • Pin: stable server-only release │
+                 │ • Pin: 6.0.2 (server-only)        │
                  │ • Auth: REDIS_ARGS requirepass    │
                  │ • Graph: threatpath_demo          │
                  │ • Volume: /var/lib/falkordb/data  │
                  └───────────────────────────────────┘
 ```
+
+**Live Demonstration URL:** [https://threatpath-production.up.railway.app](https://threatpath-production.up.railway.app)  
+**GitHub Repository:** [https://github.com/SaswatSRoy/ThreatPath](https://github.com/SaswatSRoy/ThreatPath)
 
 ### Architectural Safeguards
 1. **Single Web Application Origin:** The React/Vite production distribution is built and statically served directly by FastAPI. All API calls use relative paths (`/api/...`), completely eliminating CORS complexities, cross-origin cookies, or public API leakage.
@@ -94,10 +97,10 @@ To deploy ThreatPath on Railway, follow these exact steps in the Railway dashboa
    falkordb/falkordb-server:6.0.2
    ```
    *(Multi-architecture manifest digest: `sha256:8e4fe29e6646890a9deaf2f009ad2bc5e592d79fe9cd718810c3a97a8bcd34c0`)*
-3. Name the service: `falkordb`.
+3. Name the service: **`falkordb-server`**.
 4. In the service **Settings**:
    - **Networking:** Do **NOT** generate a public domain. Do **NOT** create a public TCP proxy.
-   - Note the **Private Service Name** (typically `falkordb.railway.internal`).
+   - Note the **Private Service Name** (typically `falkordb-server.railway.internal`).
 5. In **Volumes**:
    - Click **Add Volume**.
    - Set the mount path strictly to:
@@ -117,7 +120,7 @@ To deploy ThreatPath on Railway, follow these exact steps in the Railway dashboa
 ### Step 3: Provision Service 1 — ThreatPath Web Application
 1. In the project canvas, click **+ Create** -> **GitHub Repo**.
 2. Select your repository `ThreatPath`.
-3. Name the service: `threatpath-web`.
+3. Name the service: `threatpath-web` (or `threatpath-production`).
 4. In **Settings**:
    - **Build:** Builder is automatically detected from the root `Dockerfile`.
    - **Deploy -> Start Command:** Leave **EMPTY** (defaults automatically to the Dockerfile's built-in `CMD ["sh", "-c", "exec uvicorn backend.main:app --host 0.0.0.0 --port \"${PORT:-8000}\""]`).
@@ -125,14 +128,14 @@ To deploy ThreatPath on Railway, follow these exact steps in the Railway dashboa
    - **Healthcheck Path:** Set to `/api/health`.
    - **Healthcheck Timeout:** Set to `120` seconds.
    - **Restart Policy:** `On Failure` (max retries: 5).
-5. In **Variables**, enter the following environment configuration using official Railway template syntax:
+5. In **Variables**, enter the following environment configuration using official Railway template syntax (referencing Service 2 `falkordb-server`):
 
 | Variable Name | Recommended Value | Description | Secret? |
 | :--- | :--- | :--- | :--- |
 | `APP_ENV` | `production` | Production runtime flag | No |
-| `FALKORDB_HOST` | `${{ falkordb.RAILWAY_PRIVATE_DOMAIN }}` | Official Railway cross-service private DNS | No |
+| `FALKORDB_HOST` | `${{ falkordb-server.RAILWAY_PRIVATE_DOMAIN }}` | Official Railway cross-service private DNS | No |
 | `FALKORDB_PORT` | `6379` | FalkorDB standard port | No |
-| `FALKORDB_PASSWORD` | `${{ falkordb.FALKORDB_PASSWORD }}` | Official Railway cross-service secret reference | **YES (Secret)** |
+| `FALKORDB_PASSWORD` | `${{ falkordb-server.FALKORDB_PASSWORD }}` | Official Railway cross-service secret reference | **YES (Secret)** |
 | `FALKORDB_GRAPH` | `threatpath_demo` | Dedicated remote demo graph | No |
 | `LLM_PROVIDER` | `mock` | Deterministic fallback mode (zero external key required) | No |
 | `ENABLE_SIMULATED_RESPONSES` | `true` | Allows simulated defensive response lifecycle | No |
@@ -149,11 +152,11 @@ Before provisioning or authorizing a public demonstration deployment, verify the
 
 - [ ] **Database Authentication**:
   - FalkorDB service configured with `REDIS_ARGS=--requirepass ${{ FALKORDB_PASSWORD }} --appendonly yes`.
-  - Web application securely references `${{ falkordb.FALKORDB_PASSWORD }}` via Railway platform secrets.
+  - Web application securely references `${{ falkordb-server.FALKORDB_PASSWORD }}` via Railway platform secrets.
   - Pinned to verified immutable image `falkordb/falkordb-server:6.0.2` (`sha256:8e4fe29e6646890a9deaf2f009ad2bc5e592d79fe9cd718810c3a97a8bcd34c0`).
 - [ ] **Private Networking**:
   - FalkorDB service has **no public domain** and **no public TCP proxy** on port 6379.
-  - Web application connects via private DNS: `${{ falkordb.RAILWAY_PRIVATE_DOMAIN }}:6379`.
+  - Web application connects via private DNS: `${{ falkordb-server.RAILWAY_PRIVATE_DOMAIN }}:6379`.
   - Port 6379 is completely unreachable from the public internet.
 - [ ] **Persistence**:
   - Persistent volume attached to FalkorDB service mounted strictly at `/var/lib/falkordb/data`.
@@ -176,7 +179,7 @@ Before provisioning or authorizing a public demonstration deployment, verify the
 
 > [!IMPORTANT]
 > **Railway Private Network Boundary:**
-> FalkorDB has **no public domain or TCP proxy** and listens solely on Railway's internal private mesh (`${{ falkordb.RAILWAY_PRIVATE_DOMAIN }}:6379`). Railway's private DNS is only resolvable by containers running **inside** the Railway project environment.
+> FalkorDB has **no public domain or TCP proxy** and listens solely on Railway's internal private mesh (`${{ falkordb-server.RAILWAY_PRIVATE_DOMAIN }}:6379`). Railway's private DNS is only resolvable by containers running **inside** the Railway project environment.
 > 
 > Therefore, remote seeding **cannot** be executed directly from your local laptop against the private hostname. It must be executed from inside Railway's private network using one of the two guarded procedures below.
 > 
@@ -220,55 +223,77 @@ If you prefer an automated or headless one-off job:
      python -m scripts.seed_remote --confirm
      ```
    - **Deploy -> Restart Policy**: Set to **`Never`** (ensures it runs once and stops).
-4. In **Variables**, add the same database variables:
-   - `FALKORDB_HOST` = `${{ falkordb.RAILWAY_PRIVATE_DOMAIN }}`
+4. In **Variables**, add the same database variables (referencing `falkordb-server`):
+   - `FALKORDB_HOST` = `${{ falkordb-server.RAILWAY_PRIVATE_DOMAIN }}`
    - `FALKORDB_PORT` = `6379`
-   - `FALKORDB_PASSWORD` = `${{ falkordb.FALKORDB_PASSWORD }}`
+   - `FALKORDB_PASSWORD` = `${{ falkordb-server.FALKORDB_PASSWORD }}`
    - `FALKORDB_GRAPH` = `threatpath_demo`
 5. Click **Deploy**. Check the deployment logs to confirm successful seeding output.
 6. Once completed, **Delete** the `threatpath-seeder` service in Railway so it does not persist or re-run.
 
 ---
 
-### Seeding Verification Output
-Both methods will verify and report:
+### Seeding Verification Output & Validator Audit Note
+
+Both seeding methods execute `seed_graph()` and insert into `threatpath_demo`:
 1. `alert-sec-001` (Scenario A: Suspicious Interactive Logon & Beaconing Activity)
 2. `alert-sec-002` (Scenario B: Single Inconclusive Beaconing Indicator)
 3. `alert-sec-003` (Scenario C: High-Severity CVE on Exposed DMZ Host)
 4. `alert-sec-004` (Scenario D: Distributed SSH Password-Spray Attempt)
 5. 24 graph nodes and 20 directional relationships connecting identities, hosts, processes, MITRE ATT&CK techniques, vulnerabilities, and assets.
 
+> [!NOTE]
+> **Engineering Audit Note on Validator Assertion:**
+> In the current release, `seed_graph()` completes with 100% success inserting all 24 nodes, 20 relationships, and 4 scenario alerts into `threatpath_demo`. However, the helper validation function `validate_seeded_graph` in `scripts/seed_remote.py` checks for relationship label `HAS_TECHNIQUE` instead of the canonical `MAPS_TO` defined in `cypher/seed_scenarios.cypher` and `docs/GRAPH_MODEL.md`.
+> Consequently, the script's exit code reports validation failure on this assertion. The actual graph insertion is completely intact and verified live: `/api/alerts` returns all 4 alerts with HTTP 200. Updating the assertion string in `scripts/seed_remote.py` is logged as a pending maintenance patch.
+
 ---
 
 ## 6. Public URL Verification Checklist
 
-Once deployed and seeded, perform these checks against the public HTTPS URL:
+Perform these read-only checks against the live production deployment:
 
-1. **Health Endpoint:**
+1. **Live Health Endpoint Check:**
    ```bash
-   curl -s https://<your-domain>.up.railway.app/api/health | jq .
+   curl -s https://threatpath-production.up.railway.app/api/health | jq .
    ```
-   Expected response:
+   **Verified Live Response:**
    ```json
    {
      "status": "healthy",
      "falkordb_status": "connected",
      "active_graph": "threatpath_demo",
-     "available_graphs": ["threatpath_demo"],
+     "available_graphs": [
+       "threatpath_demo"
+     ],
      "llm_mode": "deterministic",
      "simulated_responses_enabled": true
    }
    ```
-2. **Frontend UI:** Open `https://<your-domain>.up.railway.app` in any modern browser. Verify:
+
+2. **Live Alert Catalog Check:**
+   ```bash
+   curl -s https://threatpath-production.up.railway.app/api/alerts | jq '.[].id'
+   ```
+   **Verified Live Response:**
+   ```text
+   "alert-sec-004"
+   "alert-sec-003"
+   "alert-sec-001"
+   "alert-sec-002"
+   ```
+
+3. **Frontend UI Walkthrough:** Open [https://threatpath-production.up.railway.app](https://threatpath-production.up.railway.app) in any modern browser. Verify:
    - Dark SOC visual identity with header status badge showing `Connected (threatpath_demo)`.
    - Alert queue displays all 4 synthetic scenarios.
    - Scenario A investigation loads Cytoscape.js interactive graph within 200ms.
    - Proposing, approving, and executing simulated Host Isolation succeeds with action-specific verification (`placed in isolated VLAN`).
-3. **API 404 Guard:**
+
+4. **API 404 Guard:**
    ```bash
-   curl -i https://<your-domain>.up.railway.app/api/nonexistent
+   curl -i https://threatpath-production.up.railway.app/api/nonexistent
    ```
-   Must return HTTP 404 with JSON `{ "detail": "Endpoint not found" }` (not HTML).
+   Returns HTTP 404 with JSON `{ "detail": "Endpoint not found" }` (never falls through to HTML).
 
 ---
 

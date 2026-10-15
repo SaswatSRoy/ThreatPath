@@ -1,12 +1,17 @@
 # ThreatPath: Graph-Native Defensive Security Investigation Agent
 
+[![Live Application](https://img.shields.io/badge/Live_Application-threatpath--production.up.railway.app-0284c7?style=for-the-badge&logo=railway)](https://threatpath-production.up.railway.app)
+[![GitHub Repository](https://img.shields.io/badge/GitHub-SaswatSRoy%2FThreatPath-181717?style=for-the-badge&logo=github)](https://github.com/SaswatSRoy/ThreatPath)
 [![Graph Hacks 2026](https://img.shields.io/badge/Graph_Hacks_2026-Track_01:_Agents_That_Act_on_Connected_Data-0284c7?style=for-the-badge)](https://graphhacks.devpost.com/)
-[![Database: FalkorDB](https://img.shields.io/badge/Database-FalkorDB_Edge-c084fc?style=for-the-badge&logo=redis)](https://docs.falkordb.com/)
+[![Database: FalkorDB](https://img.shields.io/badge/Database-FalkorDB_6.0.2-c084fc?style=for-the-badge&logo=redis)](https://docs.falkordb.com/)
 [![Tests: 38 Passed](https://img.shields.io/badge/Tests-38_Passed_(100%25)-10b981?style=for-the-badge)](tests/)
 [![Docker: Multi--Stage_Production](https://img.shields.io/badge/Docker-Multi--Stage_Prod_Verified-38bdf8?style=for-the-badge&logo=docker)](Dockerfile)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue?style=for-the-badge)](LICENSE)
 
 > **ThreatPath** is an autonomous defensive security investigation agent built natively on **FalkorDB** for **Graph Hacks 2026 (Track 01 — Agents That Act on Connected Data)**. It investigates suspicious security alerts by traversing multi-hop causal paths across identities, events, hosts, process trees, network indicators, MITRE ATT&CK techniques, known exploited vulnerabilities (CISA KEV), and critical business assets.
+>
+> **Live Deployed Application:** [https://threatpath-production.up.railway.app](https://threatpath-production.up.railway.app)  
+> **Source Repository:** [https://github.com/SaswatSRoy/ThreatPath](https://github.com/SaswatSRoy/ThreatPath)
 
 ---
 
@@ -25,7 +30,7 @@
 - **Simulated Fleet Verification**: Simulates containment actions against a verified sandbox fleet and validates resulting state telemetry before confirming success.
 - **Official Model Context Protocol (MCP) Server**: Exposes 8 domain-specific investigation tools via the official Python MCP SDK (`mcp 2.x`).
 - **Interactive Cytoscape.js Workspace**: Real-time visual graph representation with node property inspection, layout switching, and responsive telemetry panels.
-- **Complete Test Suite & Provenance Persistence**: 24 automated unit and integration tests passing against live FalkorDB queries.
+- **Complete Test Suite & Provenance Persistence**: 38 automated unit, integration, and ablation tests passing (100%) against live FalkorDB queries.
 
 ---
 
@@ -282,7 +287,16 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for step-by-step Railway dashboard 
 
 ---
 
-## 14. AI-Assisted Development Disclosure
+## 14. Known Limitations & Engineering Notes
+
+1. **Deterministic Rule Engine (No Black-Box Scoring)**: ThreatPath's assessment engine operates on explicit, testable heuristic factor weights (ranging from 0.05 to 0.95). Scores provide transparent, explainable triage ranking rather than calibrated Bayesian probabilities.
+2. **Simulated Response Fleet**: Consequential actions (`SIMULATE_ISOLATE_HOST`, `SIMULATE_DISABLE_ACCOUNT`, `SIMULATE_ESCALATE_INCIDENT`) modify a sandboxed, state-persisted fleet simulation in FalkorDB and local memory. ThreatPath never executes destructive commands or modifies real cloud/EDR infrastructure.
+3. **LLM Provider Default**: The production deployment operates by default with `LLM_PROVIDER=mock`, utilizing deterministic rule-based generation for incident narratives without external API key dependencies. External LLM providers (`openai`, `anthropic`, `gemini`) are supported optionally.
+4. **Remote Seeder Validator Assertion**: The `scripts/seed_remote.py` utility successfully inserts all 24 nodes, 20 relationships, and 4 scenario alerts into `threatpath_demo`. However, its post-seed validation function checks for relationship label `HAS_TECHNIQUE` instead of the canonical `MAPS_TO` defined across the graph model and Cypher queries. While all four alerts and graph queries are fully active and verified on the live deployment, updating this validation assertion in `scripts/seed_remote.py` is documented as a known minor maintenance item for the next release.
+
+---
+
+## 15. AI-Assisted Development Disclosure
 
 In accordance with Graph Hacks 2026 rules:
 - ThreatPath was designed and engineered with assistance from **Google Antigravity**.
